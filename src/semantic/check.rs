@@ -206,11 +206,15 @@ fn check_assign(
             match symbol {
                 Some(info) => {
                     if let (Some(expected), Some(actual)) = (&info.ty, &val_ty) {
-                        if !types_compatible(expected, actual) && !info.mutable {
-                            errors.push(format!(
-                                "type mismatch: cannot assign {:?} to {}: {:?}",
-                                actual, name, expected
-                            ));
+                        if !types_compatible(expected, actual) {
+                            if info.mutable {
+                                symbols.update_type(name, actual.clone());
+                            } else {
+                                errors.push(format!(
+                                    "type mismatch: cannot assign {:?} to {}: {:?}",
+                                    actual, name, expected
+                                ));
+                            }
                         }
                     }
                 }

@@ -214,6 +214,8 @@ impl SemanticAnalyzer {
             }
         }
 
+        let pre_snap = self.symbols.snapshot_mut_types();
+
         self.symbols.push_scope();
         for stmt in &then_block.stmts {
             self.analyze_stmt(stmt);
@@ -225,6 +227,8 @@ impl SemanticAnalyzer {
             self.analyze_stmt(else_stmt);
             self.symbols.pop_scope();
         }
+
+        self.symbols.unify_mut_types(&pre_snap);
     }
 
     fn analyze_while(&mut self, cond: &Expr, body: &Block) {
@@ -235,11 +239,15 @@ impl SemanticAnalyzer {
             }
         }
 
+        let pre_snap = self.symbols.snapshot_mut_types();
+
         self.symbols.push_scope();
         for stmt in &body.stmts {
             self.analyze_stmt(stmt);
         }
         self.symbols.pop_scope();
+
+        self.symbols.unify_mut_types(&pre_snap);
     }
 
     fn analyze_for(&mut self, var: &str, iter: &Expr, body: &Block) {
