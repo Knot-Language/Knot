@@ -147,7 +147,14 @@ fn check_document(text: &str) -> DiagnosticBag {
     let mut diagnostics = DiagnosticBag::new(text);
     diagnostics.diagnostics.append(&mut parser.diagnostics.diagnostics);
 
-    let _ = SemanticAnalyzer::analyze(&program, &mut diagnostics);
+    match SemanticAnalyzer::analyze(&program, &mut diagnostics) {
+        Err(errors) => {
+            for e in errors {
+                diagnostics.error(e, crate::error::Span::new(1, 1));
+            }
+        }
+        Ok(_) => {}
+    }
 
     diagnostics
 }
