@@ -5,8 +5,13 @@ use crate::ir::lower::Lower;
 use crate::codegen::llvm::LlvmBackend;
 
 pub fn compile_file(source_path: &str, output_path: &str, run: bool) {
-    let source = std::fs::read_to_string(source_path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", source_path, e));
+    let source = match std::fs::read_to_string(source_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: failed to read '{}': {}", source_path, e);
+            std::process::exit(1);
+        }
+    };
 
     let mut parser = Parser::new(&source);
     let program = parser.parse_program();
@@ -42,7 +47,15 @@ pub fn compile_file(source_path: &str, output_path: &str, run: bool) {
         .strip_suffix(".exe")
         .unwrap_or(output_path);
     let ll_path = format!("{}.ll", base);
-    std::fs::write(&ll_path, &ll).expect("write .ll");
+
+    if output_path.contains("..") {
+        eprintln!("warning: output path contains '..', this may write files outside the current directory");
+    }
+
+    if let Err(e) = std::fs::write(&ll_path, &ll) {
+        eprintln!("error: failed to write '{}': {}", ll_path, e);
+        std::process::exit(1);
+    }
 
     LlvmBackend::compile_to_exe(&ll_path, output_path);
     println!("  compiled {}", output_path);
@@ -53,9 +66,12 @@ pub fn compile_file(source_path: &str, output_path: &str, run: bool) {
         } else {
             format!(".\\{}", output_path)
         };
-        let status = std::process::Command::new(&exe)
-            .status()
-            .expect("run exe");
-        std::process::exit(status.code().unwrap_or(1));
+        match std::process::Command::new(&exe).status() {
+            Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+            Err(e) => {
+                eprintln!("error: failed to run '{}': {}", exe, e);
+                std::process::exit(1);
+            }
+        }
     }
 }

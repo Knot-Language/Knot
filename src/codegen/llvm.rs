@@ -31,15 +31,26 @@ impl LlvmBackend {
     pub fn compile_to_exe(ll_path: &str, exe_path: &str) {
         let clang = std::env::var("KNOT_CLANG")
             .unwrap_or_else(|_| "clang".to_string());
-        let status = std::process::Command::new(&clang)
+        if std::env::var("KNOT_CLANG").is_ok() {
+            eprintln!("note: using custom clang from KNOT_CLANG: {}", clang);
+        }
+        match std::process::Command::new(&clang)
             .arg(ll_path)
             .arg("-o")
             .arg(exe_path)
             .arg("-Wno-override-module")
             .status()
-            .expect("failed to run clang");
-        if !status.success() {
-            panic!("clang failed");
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                eprintln!("error: clang exited with code {}", status.code().unwrap_or(-1));
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("error: failed to run clang '{}': {}", clang, e);
+                eprintln!("hint: install clang or set KNOT_CLANG to a valid clang binary path");
+                std::process::exit(1);
+            }
         }
     }
 }

@@ -43,7 +43,15 @@ impl SemanticAnalyzer {
         ));
     }
 
-    fn check_entry_point(&mut self, _program: &[Stmt]) {}
+    fn check_entry_point(&mut self, program: &[Stmt]) {
+        let has_main = program.iter().any(|s| matches!(s, Stmt::FuncDef { name, .. } if name == "main"));
+        if !has_main {
+            self.diagnostics.warn(
+                "no 'func main() -> I32' entry point found — the compiled program will have no main function".to_string(),
+                crate::error::Span::new(1, 1),
+            );
+        }
+    }
 
     // ── Statements ────────────────────────────────────────
 

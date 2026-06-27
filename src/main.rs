@@ -39,6 +39,14 @@ fn main() {
 }
 
 fn cmd_new(name: &str) {
+    if name.contains("..") || name.contains('/') || name.contains('\\') {
+        eprintln!("error: project name '{}' must not contain path separators or '..'", name);
+        std::process::exit(1);
+    }
+    if !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        eprintln!("error: project name '{}' must only contain letters, digits, underscores, and hyphens", name);
+        std::process::exit(1);
+    }
     let dir = std::path::Path::new(name);
     if dir.exists() {
         eprintln!("error: directory '{}' already exists", name);

@@ -7,12 +7,15 @@ use crate::lexer::token::Token;
 use crate::parser::ast::*;
 use crate::parser::symbol::SymbolTable;
 
+const MAX_PARSE_DEPTH: usize = 256;
+
 pub struct Parser {
     tokens: Vec<Token>,
     positions: Vec<(usize, usize)>,
     pos: usize,
     pub symbols: SymbolTable,
     pub diagnostics: DiagnosticBag,
+    depth: usize,
 }
 
 impl Parser {
@@ -24,7 +27,21 @@ impl Parser {
             pos: 0,
             symbols: SymbolTable::new(),
             diagnostics: DiagnosticBag::new(source),
+            depth: 0,
         }
+    }
+
+    fn enter_depth(&mut self) -> bool {
+        if self.depth >= MAX_PARSE_DEPTH {
+            self.error("maximum nesting depth exceeded".to_string());
+            return false;
+        }
+        self.depth += 1;
+        true
+    }
+
+    fn leave_depth(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
     fn current_span(&self) -> Span {
@@ -220,11 +237,18 @@ impl Parser {
 
     fn parse_ntimes(&mut self) -> Option<u32> {
         let v = match self.peek() {
-            Token::Number(crate::lexer::num::Num::I32(v)) => *v as u32,
+            Token::Number(crate::lexer::num::Num::I32(v)) => {
+                if *v <= 0 {
+                    self.warn(format!("break/continue level must be a positive integer, got {}", v));
+                    None
+                } else {
+                    Some(*v as u32)
+                }
+            }
             _ => return None,
         };
         self.advance();
-        Some(v)
+        v
     }
 
     fn parse_match(&mut self) -> Stmt {
@@ -347,6 +371,10 @@ impl Parser {
 
     fn parse_block(&mut self) -> Stmt {
         self.expect_operator("{");
+        if !self.enter_depth() {
+            self.sync_to_block_end();
+            return Stmt::Block(Block { stmts: vec![] });
+        }
         self.symbols.push_scope();
         let mut stmts = Vec::new();
         self.skip_newlines();
@@ -357,6 +385,7 @@ impl Parser {
             self.skip_newlines();
         }
         self.symbols.pop_scope();
+        self.leave_depth();
         self.expect_operator("}");
         Stmt::Block(Block { stmts })
     }
@@ -388,7 +417,13 @@ impl Parser {
             self.advance();
             self.skip_newlines();
             if self.is_kw("if") {
-                Some(Box::new(self.parse_if()))
+                if self.enter_depth() {
+                    let result = Some(Box::new(self.parse_if()));
+                    self.leave_depth();
+                    result
+                } else {
+                    None
+                }
             } else {
                 match self.parse_block() {
                     Stmt::Block(b) => Some(Box::new(Stmt::Block(b))),

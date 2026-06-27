@@ -1,6 +1,7 @@
 use crate::parser::ast::*;
 use crate::ir::tac::*;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 pub struct Lower {
     reg_counter: Reg,
@@ -18,10 +19,9 @@ pub struct Lower {
     current_class: Option<String>,
     string_counter: usize,
     strings: Vec<(String, String)>,
-    // Track known function parameter info for default arg filling
     func_params: HashMap<String, Vec<Param>>,
-    // Track all class members for mixin resolution
     all_class_members: HashMap<String, Vec<ClassMember>>,
+    imported_files: HashSet<String>,
 }
 
 impl Lower {
@@ -44,6 +44,7 @@ impl Lower {
             strings: Vec::new(),
             func_params: HashMap::new(),
             all_class_members: HashMap::new(),
+            imported_files: HashSet::new(),
         };
 
         // First pass: collect func params and class members
@@ -108,7 +109,7 @@ impl Lower {
     fn string_constant(&mut self, s: &str) -> String {
         let name = format!("@.str.{}", self.string_counter);
         self.string_counter += 1;
-        let escaped = s.replace('\\', "\\5C").replace('\n', "\\0A").replace('"', "\\22");
+        let escaped = escape_llvm_string(s);
         self.strings.push((name.clone(), escaped));
         name
     }
@@ -237,11 +238,30 @@ impl Lower {
     }
 
     fn lower_import(&mut self, path: &str) {
-        if let Ok(source) = std::fs::read_to_string(path) {
-            let mut parser = crate::parser::Parser::new(&source);
-            let stmts = parser.parse_program();
-            for stmt in &stmts {
-                self.lower_top_level(stmt);
+        if path.contains("..") {
+            eprintln!("warning: import path '{}' contains '..', skipping (path traversal blocked)", path);
+            return;
+        }
+        let canon = match std::fs::canonicalize(path) {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(e) => {
+                eprintln!("warning: cannot resolve import '{}': {}", path, e);
+                return;
+            }
+        };
+        if !self.imported_files.insert(canon.clone()) {
+            return;
+        }
+        match std::fs::read_to_string(&canon) {
+            Ok(source) => {
+                let mut parser = crate::parser::Parser::new(&source);
+                let stmts = parser.parse_program();
+                for stmt in &stmts {
+                    self.lower_top_level(stmt);
+                }
+            }
+            Err(e) => {
+                eprintln!("warning: failed to read import '{}': {}", path, e);
             }
         }
     }
@@ -743,4 +763,20 @@ fn member_name(m: &ClassMember) -> Option<String> {
         ClassMember::AbstractMethod { name, .. } => Some(name.clone()),
         ClassMember::Mixin(_) => None,
     }
+}
+
+fn escape_llvm_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'\\' => out.push_str("\\5C"),
+            b'"' => out.push_str("\\22"),
+            b'\n' => out.push_str("\\0A"),
+            b'\r' => out.push_str("\\0D"),
+            b'\t' => out.push_str("\\09"),
+            0x10..=0x7E => out.push(byte as char),
+            _ => out.push_str(&format!("\\{:02X}", byte)),
+        }
+    }
+    out
 }

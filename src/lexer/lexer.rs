@@ -220,21 +220,21 @@ impl Lexer {
         let clean: String = raw.chars().filter(|&c| c != '_').collect();
 
         let num = match suffix.to_lowercase().as_str() {
-            "f32" => Num::F32(clean.parse().unwrap()),
-            "f64" => Num::F64(clean.parse().unwrap()),
-            "i8" => Num::I8(clean.parse().unwrap()),
-            "i16" => Num::I16(clean.parse().unwrap()),
-            "i32" => Num::I32(clean.parse().unwrap()),
-            "i64" => Num::I64(clean.parse().unwrap()),
-            "u8" => Num::U8(clean.parse().unwrap()),
-            "u16" => Num::U16(clean.parse().unwrap()),
-            "u32" => Num::U32(clean.parse().unwrap()),
-            "u64" => Num::U64(clean.parse().unwrap()),
+            "f32" => match clean.parse() { Ok(v) => Num::F32(v), Err(_) => return Token::Error(format!("float literal out of range: {}", raw)) },
+            "f64" => match clean.parse() { Ok(v) => Num::F64(v), Err(_) => return Token::Error(format!("float literal out of range: {}", raw)) },
+            "i8" => match clean.parse() { Ok(v) => Num::I8(v), Err(_) => return Token::Error(format!("integer literal out of range for I8: {}", raw)) },
+            "i16" => match clean.parse() { Ok(v) => Num::I16(v), Err(_) => return Token::Error(format!("integer literal out of range for I16: {}", raw)) },
+            "i32" => match clean.parse() { Ok(v) => Num::I32(v), Err(_) => return Token::Error(format!("integer literal out of range for I32: {}", raw)) },
+            "i64" => match clean.parse() { Ok(v) => Num::I64(v), Err(_) => return Token::Error(format!("integer literal out of range for I64: {}", raw)) },
+            "u8" => match clean.parse() { Ok(v) => Num::U8(v), Err(_) => return Token::Error(format!("integer literal out of range for U8: {}", raw)) },
+            "u16" => match clean.parse() { Ok(v) => Num::U16(v), Err(_) => return Token::Error(format!("integer literal out of range for U16: {}", raw)) },
+            "u32" => match clean.parse() { Ok(v) => Num::U32(v), Err(_) => return Token::Error(format!("integer literal out of range for U32: {}", raw)) },
+            "u64" => match clean.parse() { Ok(v) => Num::U64(v), Err(_) => return Token::Error(format!("integer literal out of range for U64: {}", raw)) },
             "" => {
                 if is_float {
-                    Num::F64(clean.parse().unwrap())
+                    match clean.parse() { Ok(v) => Num::F64(v), Err(_) => return Token::Error(format!("float literal out of range: {}", raw)) }
                 } else {
-                    Num::I32(clean.parse().unwrap())
+                    match clean.parse() { Ok(v) => Num::I32(v), Err(_) => return Token::Error(format!("integer literal out of range for I32: {}", raw)) }
                 }
             }
             _ => unreachable!(),
