@@ -6,13 +6,13 @@ use crate::error::DiagnosticBag;
 
 pub struct SemanticAnalyzer {
     symbols: SymbolTable,
-    errors: Vec<String>,
+    errors: Vec<(String, crate::error::Span)>,
     return_type: Option<Type>,
     diagnostics: DiagnosticBag,
 }
 
 impl SemanticAnalyzer {
-    pub fn analyze(program: &[Stmt], diagnostics: &mut DiagnosticBag) -> Result<SymbolTable, Vec<String>> {
+    pub fn analyze(program: &[Stmt], diagnostics: &mut DiagnosticBag) -> Result<SymbolTable, Vec<(String, crate::error::Span)>> {
         let mut sa = SemanticAnalyzer {
             symbols: SymbolTable::new(),
             errors: Vec::new(),
@@ -32,7 +32,7 @@ impl SemanticAnalyzer {
     }
 
     fn error(&mut self, msg: String) {
-        self.errors.push(msg.clone());
+        self.errors.push((msg.clone(), crate::error::Span::new(1, 1)));
         self.diagnostics.error(msg, crate::error::Span::new(1, 1));
     }
 

@@ -1,3 +1,5 @@
+use crate::error::Span;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     FuncDef {
@@ -146,61 +148,71 @@ pub struct Param {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    Int(i64),
-    Float(f64),
-    String(String),
-    Bool(bool),
-    Null,
-    Ident(String),
+    Int(i64, Span),
+    Float(f64, Span),
+    String(String, Span),
+    Bool(bool, Span),
+    Null(Span),
+    Ident(String, Span),
     Binary {
         op: BinOp,
         left: Box<Expr>,
         right: Box<Expr>,
+        span: Span,
     },
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
+        span: Span,
     },
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
+        span: Span,
     },
     Index {
         obj: Box<Expr>,
         index: Box<Expr>,
+        span: Span,
     },
     Access {
         obj: Box<Expr>,
         field: String,
+        span: Span,
     },
     Assign {
         target: Box<Expr>,
         value: Box<Expr>,
+        span: Span,
     },
     IfExpr {
         cond: Box<Expr>,
         then_block: Block,
         else_block: Option<Block>,
+        span: Span,
     },
-    Array(Vec<Expr>),
-    Dict(Vec<(Expr, Expr)>),
+    Array(Vec<Expr>, Span),
+    Dict(Vec<(Expr, Expr)>, Span),
     Cast {
         expr: Box<Expr>,
         ty: Type,
         forced: bool,
+        span: Span,
     },
     Lambda {
         params: Vec<Param>,
         body: Block,
+        span: Span,
     },
     MatchExpr {
         expr: Box<Expr>,
         branches: Vec<MatchBranch>,
+        span: Span,
     },
-    /// Postfix increment/decrement: x++ / x--  (returns old value)
     PostfixOp {
         op: BinOp,
         target: Box<Expr>,
+        span: Span,
     },
 }
 

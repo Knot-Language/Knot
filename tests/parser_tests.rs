@@ -54,8 +54,8 @@ fn prec_mult_before_add() {
     match &stmts[0] {
         Stmt::FuncDef { body, .. } => match &body.stmts[0] {
             Stmt::Expr(Expr::Assign { value, .. }) => match value.as_ref() {
-                Expr::Binary { op: BinOp::Add, left, right } => {
-                    assert!(matches!(left.as_ref(), Expr::Int(1)));
+                Expr::Binary { op: BinOp::Add, left, right, .. } => {
+                    assert!(matches!(left.as_ref(), Expr::Int(1, _)));
                     assert!(matches!(right.as_ref(), Expr::Binary { op: BinOp::Mul, .. }));
                 }
                 _ => panic!("expected Add"),
@@ -131,7 +131,7 @@ fn string_literal() {
     match &stmts[0] {
         Stmt::FuncDef { body, .. } => match &body.stmts[0] {
             Stmt::Expr(Expr::Assign { value, .. }) => {
-                assert!(matches!(value.as_ref(), Expr::String(s) if s == "hello"));
+                assert!(matches!(value.as_ref(), Expr::String(s, _) if s == "hello"));
             }
             _ => panic!("expected Assign"),
         },

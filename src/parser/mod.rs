@@ -286,7 +286,7 @@ impl Parser {
     fn parse_match_branch(&mut self) -> MatchBranch {
         let pattern = if self.is_kw("else") {
             self.advance();
-            Expr::Ident("else".to_string())
+            Expr::Ident("else".to_string(), self.current_span())
         } else {
             self.parse_expr()
         };
@@ -736,7 +736,7 @@ impl Parser {
         self.advance();
         let wrap_expr = self.parse_expr();
         let (callee_ident, mut extra_args) = match &wrap_expr {
-            Expr::Call { callee, args } => (callee.clone(), args.clone()),
+            Expr::Call { callee, args, .. } => (callee.clone(), args.clone()),
             other => (Box::new(other.clone()), vec![]),
         };
 
@@ -748,24 +748,26 @@ impl Parser {
 
         match stmt {
             Stmt::FuncDef { name, params, body, .. } => {
-                let mut args = vec![Expr::Lambda { params, body }];
+                let mut args = vec![Expr::Lambda { params, body, span: self.current_span() }];
                 args.append(&mut extra_args);
                 Stmt::Expr(Expr::Assign {
-                    target: Box::new(Expr::Ident(name)),
-                    value: Box::new(Expr::Call { callee: callee_ident, args }),
+                    target: Box::new(Expr::Ident(name, self.current_span())),
+                    value: Box::new(Expr::Call { callee: callee_ident, args, span: self.current_span() }),
+                    span: self.current_span(),
                 })
             }
-            Stmt::Expr(Expr::Assign { target, value }) => {
+            Stmt::Expr(Expr::Assign { target, value, .. }) => {
                 let mut args = vec![*value];
                 args.append(&mut extra_args);
                 Stmt::Expr(Expr::Assign {
                     target,
-                    value: Box::new(Expr::Call { callee: callee_ident, args }),
+                    value: Box::new(Expr::Call { callee: callee_ident, args, span: self.current_span() }),
+                    span: self.current_span(),
                 })
             }
             _other => {
                 self.error("expected function or variable declaration after @wrap".to_string());
-                Stmt::Expr(Expr::Null)
+                Stmt::Expr(Expr::Null(self.current_span()))
             }
         }
     }
@@ -1042,6 +1044,7 @@ impl Parser {
                 left = Expr::Assign {
                     target: Box::new(left),
                     value: Box::new(right),
+                    span: self.current_span(),
                 };
             } else if self.is_compound_assign() {
                 left = self.parse_compound_assign(left, op_bp);
@@ -1051,7 +1054,7 @@ impl Parser {
                     _ => unreachable!(),
                 };
                 let binop = if s == "++" { BinOp::Add } else { BinOp::Sub };
-                left = Expr::PostfixOp { op: binop, target: Box::new(left) };
+                left = Expr::PostfixOp { op: binop, target: Box::new(left), span: self.current_span() };
             } else if self.is_op(".") {
                 self.advance();
                 let field = match self.advance() {
@@ -1064,6 +1067,7 @@ impl Parser {
                 left = Expr::Access {
                     obj: Box::new(left),
                     field,
+                    span: self.current_span(),
                 };
             } else if self.is_op("::") {
                 self.advance();
@@ -1081,13 +1085,16 @@ impl Parser {
                         callee: Box::new(Expr::Access {
                             obj: Box::new(left),
                             field,
+                            span: self.current_span(),
                         }),
                         args,
+                        span: self.current_span(),
                     };
                 } else {
                     left = Expr::Access {
                         obj: Box::new(left),
                         field,
+                        span: self.current_span(),
                     };
                 }
             } else if self.is_op("(") {
@@ -1096,6 +1103,7 @@ impl Parser {
                 left = Expr::Call {
                     callee: Box::new(left),
                     args,
+                    span: self.current_span(),
                 };
             } else if self.is_op("[") {
                 self.advance();
@@ -1104,6 +1112,7 @@ impl Parser {
                 left = Expr::Index {
                     obj: Box::new(left),
                     index: Box::new(index),
+                    span: self.current_span(),
                 };
             } else if self.is_kw("as") || self.is_kw("as!") {
                 let forced = self.is_kw("as!");
@@ -1113,6 +1122,7 @@ impl Parser {
                     expr: Box::new(left),
                     ty,
                     forced,
+                    span: self.current_span(),
                 };
             } else {
                 let op = self.parse_binary_op();
@@ -1121,6 +1131,7 @@ impl Parser {
                     op,
                     left: Box::new(left),
                     right: Box::new(right),
+                    span: self.current_span(),
                 };
             }
         }
@@ -1169,7 +1180,7 @@ impl Parser {
                 self.advance();
                 let expr = self.parse_expr_bp(90);
                 match expr {
-                    Expr::Call { callee, mut args } => {
+                    Expr::Call { callee, mut args, .. } => {
                         match callee.as_ref() {
                             Expr::Access { obj, .. } => {
                                 args.insert(0, obj.as_ref().clone());
@@ -1178,12 +1189,13 @@ impl Parser {
                                 args.insert(0, callee.as_ref().clone());
                             }
                         }
-                        Expr::Call { callee, args }
+                        Expr::Call { callee, args, span: self.current_span() }
                     }
                     other => {
                         Expr::Call {
                             callee: Box::new(other.clone()),
                             args: vec![other],
+                            span: self.current_span(),
                         }
                     }
                 }
@@ -1193,14 +1205,16 @@ impl Parser {
                     let op = if s == "++" { BinOp::Add } else { BinOp::Sub };
                     self.advance();
                     let target = self.parse_expr_bp(85);
-                    let one = Expr::Int(1);
+                    let one = Expr::Int(1, self.current_span());
                     Expr::Assign {
                         target: Box::new(target.clone()),
                         value: Box::new(Expr::Binary {
                             op,
                             left: Box::new(target),
                             right: Box::new(one),
+                            span: self.current_span(),
                         }),
+                        span: self.current_span(),
                     }
                 } else {
                     let op = match s.as_str() {
@@ -1214,43 +1228,45 @@ impl Parser {
                     Expr::Unary {
                         op,
                         expr: Box::new(expr),
+                        span: self.current_span(),
                     }
                 }
             }
             Token::Number(n) => {
                 self.advance();
+                let span = self.current_span();
                 match n {
-                    crate::lexer::num::Num::F32(v) => Expr::Float(v as f64),
-                    crate::lexer::num::Num::F64(v) => Expr::Float(v),
-                    crate::lexer::num::Num::I8(v) => Expr::Int(v as i64),
-                    crate::lexer::num::Num::I16(v) => Expr::Int(v as i64),
-                    crate::lexer::num::Num::I32(v) => Expr::Int(v as i64),
-                    crate::lexer::num::Num::I64(v) => Expr::Int(v),
-                    crate::lexer::num::Num::U8(v) => Expr::Int(v as i64),
-                    crate::lexer::num::Num::U16(v) => Expr::Int(v as i64),
-                    crate::lexer::num::Num::U32(v) => Expr::Int(v as i64),
-                    crate::lexer::num::Num::U64(v) => Expr::Int(v as i64),
+                    crate::lexer::num::Num::F32(v) => Expr::Float(v as f64, span),
+                    crate::lexer::num::Num::F64(v) => Expr::Float(v, span),
+                    crate::lexer::num::Num::I8(v) => Expr::Int(v as i64, span),
+                    crate::lexer::num::Num::I16(v) => Expr::Int(v as i64, span),
+                    crate::lexer::num::Num::I32(v) => Expr::Int(v as i64, span),
+                    crate::lexer::num::Num::I64(v) => Expr::Int(v, span),
+                    crate::lexer::num::Num::U8(v) => Expr::Int(v as i64, span),
+                    crate::lexer::num::Num::U16(v) => Expr::Int(v as i64, span),
+                    crate::lexer::num::Num::U32(v) => Expr::Int(v as i64, span),
+                    crate::lexer::num::Num::U64(v) => Expr::Int(v as i64, span),
                 }
             }
             Token::String(s) => {
                 self.advance();
-                Expr::String(s.clone())
+                Expr::String(s.clone(), self.current_span())
             }
             Token::Keyword(ref s) if s == "true" => {
                 self.advance();
-                Expr::Bool(true)
+                Expr::Bool(true, self.current_span())
             }
             Token::Keyword(ref s) if s == "false" => {
                 self.advance();
-                Expr::Bool(false)
+                Expr::Bool(false, self.current_span())
             }
             Token::Keyword(ref s) if s == "null" => {
                 self.advance();
-                Expr::Null
+                Expr::Null(self.current_span())
             }
             Token::Identifier(s) => {
                 self.advance();
-                Expr::Ident(s.clone())
+                Expr::Ident(s.clone(), self.current_span())
             }
             Token::Operator(s) if s == "(" => {
                 self.advance();
@@ -1267,9 +1283,9 @@ impl Parser {
                             let e = self.parse_expr();
                             Block { stmts: vec![Stmt::Return(Some(e))] }
                         };
-                        return Expr::Lambda { params: vec![], body };
+                        return Expr::Lambda { params: vec![], body, span: self.current_span() };
                     }
-                    return Expr::Null;
+                    return Expr::Null(self.current_span());
                 }
                 if self.try_parse_lambda() {
                     return self.parse_lambda_body();
@@ -1288,7 +1304,7 @@ impl Parser {
                     token_desc(&t)
                 ));
                 self.advance();
-                Expr::Null
+                Expr::Null(self.current_span())
             }
         }
     }
@@ -1335,7 +1351,7 @@ impl Parser {
             let e = self.parse_expr();
             Block { stmts: vec![Stmt::Return(Some(e))] }
         };
-        Expr::Lambda { params, body }
+        Expr::Lambda { params, body, span: self.current_span() }
     }
 
     fn parse_array(&mut self) -> Expr {
@@ -1356,7 +1372,7 @@ impl Parser {
             }
         }
         self.expect_operator("]");
-        Expr::Array(items)
+        Expr::Array(items, self.current_span())
     }
 
     fn parse_dict(&mut self) -> Expr {
@@ -1380,7 +1396,7 @@ impl Parser {
             }
         }
         self.expect_operator("}");
-        Expr::Dict(entries)
+        Expr::Dict(entries, self.current_span())
     }
 
     fn parse_match_expr(&mut self) -> Expr {
@@ -1390,6 +1406,7 @@ impl Parser {
         Expr::MatchExpr {
             expr: Box::new(expr),
             branches,
+            span: self.current_span(),
         }
     }
 
@@ -1421,6 +1438,7 @@ impl Parser {
             cond: Box::new(cond),
             then_block,
             else_block,
+            span: self.current_span(),
         }
     }
 
@@ -1466,7 +1484,8 @@ impl Parser {
         };
         Expr::Assign {
             target: Box::new(left.clone()),
-            value: Box::new(Expr::Binary { op: binop, left: Box::new(left), right: Box::new(right) }),
+            value: Box::new(Expr::Binary { op: binop, left: Box::new(left), right: Box::new(right), span: self.current_span() }),
+            span: self.current_span(),
         }
     }
 

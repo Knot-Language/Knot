@@ -320,7 +320,7 @@ impl Lower {
                 let mut else_label: Option<Label> = None;
                 for (i, branch) in branches.iter().enumerate() {
                     let next_label = if i + 1 < branches.len() { self.new_label("match_next") } else { end_label.clone() };
-                    if branch.pattern == Expr::Ident("else".to_string()) {
+                    if is_else_pattern(&branch.pattern) {
                         else_label = Some(next_label);
                         break;
                     }
@@ -334,7 +334,7 @@ impl Lower {
                 }
                 if let Some(el) = else_label {
                     self.emit(TacInst::Label(el));
-                    if let Some(else_branch) = branches.iter().find(|b| b.pattern == Expr::Ident("else".to_string())) {
+                    if let Some(else_branch) = branches.iter().find(|b| is_else_pattern(&b.pattern)) {
                         self.lower_block(&else_branch.body);
                     }
                 }
@@ -385,7 +385,7 @@ impl Lower {
         self.continue_labels.push(cont_label.clone());
 
         let (index_reg, max_reg) = match iter {
-            Expr::Binary { op: BinOp::Range, left, right } => {
+            Expr::Binary { op: BinOp::Range, left, right, .. } => {
                 let start = self.lower_expr(left);
                 let end = self.lower_expr(right);
                 let ir = self.new_reg(); self.emit(TacInst::Mov { dest: ir, src: start });
@@ -463,37 +463,37 @@ impl Lower {
 
     fn lower_expr(&mut self, expr: &Expr) -> Operand {
         match expr {
-            Expr::Int(v) => Operand::Imm(*v),
-            Expr::Float(v) => Operand::F64(*v),
-            Expr::Bool(b) => Operand::Bool(*b),
-            Expr::Null => Operand::Imm(0),
-            Expr::String(s) => {
+            Expr::Int(v, _) => Operand::Imm(*v),
+            Expr::Float(v, _) => Operand::F64(*v),
+            Expr::Bool(b, _) => Operand::Bool(*b),
+            Expr::Null(_) => Operand::Imm(0),
+            Expr::String(s, _) => {
                 let name = self.string_constant(s);
                 let r = self.new_reg();
                 self.emit(TacInst::LoadStrConst { dest: r, name });
                 Operand::Reg(r)
             }
-            Expr::Ident(name) => {
+            Expr::Ident(name, _) => {
                 if let Some(&reg) = self.vars.get(name) { Operand::Reg(reg) }
                 else { let r = self.new_reg(); self.vars.insert(name.clone(), r); Operand::Reg(r) }
             }
-            Expr::Binary { op, left, right } => self.lower_binary(op, left, right),
-            Expr::Unary { op, expr } => self.lower_unary(op, expr),
-            Expr::Call { callee, args } => self.lower_call(callee, args),
-            Expr::Assign { target, value } => self.lower_assign(target, value),
-            Expr::Access { obj, field } => self.lower_access(obj, field),
-            Expr::PostfixOp { op, target } => {
+            Expr::Binary { op, left, right, .. } => self.lower_binary(op, left, right),
+            Expr::Unary { op, expr, .. } => self.lower_unary(op, expr),
+            Expr::Call { callee, args, .. } => self.lower_call(callee, args),
+            Expr::Assign { target, value, .. } => self.lower_assign(target, value),
+            Expr::Access { obj, field, .. } => self.lower_access(obj, field),
+            Expr::PostfixOp { op, target, .. } => {
                 let old_val = self.lower_expr(target);
                 let old_reg = self.new_reg(); self.emit(TacInst::Mov { dest: old_reg, src: old_val.clone() });
                 let one = Operand::Imm(1);
                 let dest = self.new_reg();
                 let inst = match op { BinOp::Add => TacInst::Add { dest, lhs: old_val, rhs: one }, BinOp::Sub => TacInst::Sub { dest, lhs: old_val, rhs: one }, _ => unreachable!() };
                 self.emit(inst);
-                let target_reg = match target.as_ref() { Expr::Ident(name) => *self.vars.get(name).unwrap_or(&0), _ => dest };
+                let target_reg = match target.as_ref() { Expr::Ident(name, _) => *self.vars.get(name).unwrap_or(&0), _ => dest };
                 self.emit(TacInst::Mov { dest: target_reg, src: Operand::Reg(dest) });
                 Operand::Reg(old_reg)
             }
-            Expr::Cast { expr, ty, forced: _ } => {
+            Expr::Cast { expr, ty, forced: _, .. } => {
                 let val = self.lower_expr(expr);
                 let dest = self.new_reg();
                 let target_ty = ty;
@@ -516,7 +516,7 @@ impl Lower {
                 self.var_types.insert(format!("_cast_{}", dest), target_ty.clone());
                 Operand::Reg(dest)
             }
-            Expr::IfExpr { cond, then_block, else_block } => {
+            Expr::IfExpr { cond, then_block, else_block, .. } => {
                 let cond_val = self.lower_expr(cond);
                 let else_label = self.new_label("ifexpr_else");
                 let end_label = self.new_label("ifexpr_end");
@@ -533,14 +533,14 @@ impl Lower {
                 self.emit(TacInst::Label(end_label));
                 Operand::Reg(result)
             }
-            Expr::Lambda { params, body } => self.lower_lambda(params, body),
-            Expr::MatchExpr { expr, branches } => {
+            Expr::Lambda { params, body, .. } => self.lower_lambda(params, body),
+            Expr::MatchExpr { expr, branches, .. } => {
                 let val = self.lower_expr(expr);
                 let result = self.new_reg();
                 let end_label = self.new_label("matchexpr_end");
                 for (i, branch) in branches.iter().enumerate() {
                     let next_label = if i + 1 < branches.len() { self.new_label("matchexpr_next") } else { end_label.clone() };
-                    if branch.pattern == Expr::Ident("else".to_string()) { continue; }
+                    if is_else_pattern(&branch.pattern) { continue; }
                     let pat = self.lower_expr(&branch.pattern);
                     let cmp = self.new_reg();
                     self.emit(TacInst::CmpEq { dest: cmp, lhs: val.clone(), rhs: pat });
@@ -550,24 +550,24 @@ impl Lower {
                     self.emit(TacInst::Jmp(end_label.clone()));
                     self.emit(TacInst::Label(next_label));
                 }
-                if let Some(else_branch) = branches.iter().find(|b| b.pattern == Expr::Ident("else".to_string())) {
+                if let Some(else_branch) = branches.iter().find(|b| is_else_pattern(&b.pattern)) {
                     let else_val = self.lower_block_expr(&else_branch.body);
                     self.emit(TacInst::Mov { dest: result, src: else_val });
                 }
                 self.emit(TacInst::Label(end_label));
                 Operand::Reg(result)
             }
-            Expr::Array(items) => {
+            Expr::Array(items, _) => {
                 let r = self.new_reg();
                 self.emit(TacInst::Mov { dest: r, src: Operand::Imm(items.len() as i64) });
                 Operand::Reg(r)
             }
-            Expr::Dict(entries) => {
+            Expr::Dict(entries, _) => {
                 let r = self.new_reg();
                 self.emit(TacInst::Mov { dest: r, src: Operand::Imm(entries.len() as i64) });
                 Operand::Reg(r)
             }
-            Expr::Index { obj, index } => {
+            Expr::Index { obj, index, .. } => {
                 let _o = self.lower_expr(obj);
                 let _i = self.lower_expr(index);
                 let r = self.new_reg();
@@ -670,10 +670,10 @@ impl Lower {
     }
 
     fn lower_call(&mut self, callee: &Expr, args: &[Expr]) -> Operand {
-        let (mut name, this_arg) = match callee {
-            Expr::Ident(s) => (s.clone(), None),
-            Expr::Access { obj, field } => {
-                if let Expr::Ident(class_name) = obj.as_ref() {
+        let (name, this_arg) = match callee {
+            Expr::Ident(s, _) => (s.clone(), None),
+            Expr::Access { obj, field, .. } => {
+                if let Expr::Ident(class_name, _) = obj.as_ref() {
                     let method_name = format!("{}__{}", class_name, field);
                     (method_name, Some(self.lower_expr(obj)))
                 } else {
@@ -712,12 +712,12 @@ impl Lower {
         let val = self.lower_expr(value);
 
         let (dest_reg, target_name) = match target {
-            Expr::Ident(name) => {
+            Expr::Ident(name, _) => {
                 let r = if let Some(&r) = self.vars.get(name) { r }
                 else { let r = self.new_reg(); self.vars.insert(name.clone(), r); r };
                 (r, Some(name.clone()))
             }
-            Expr::Access { obj, field } => {
+            Expr::Access { obj, field, .. } => {
                 let obj_reg = self.lower_expr(obj);
                 let class_name = self.current_class.clone().unwrap_or_default();
                 let field_ptr = self.new_reg();
@@ -753,7 +753,7 @@ impl Lower {
     fn lower_access(&mut self, obj: &Expr, field: &str) -> Operand {
         let class_name = self.current_class.clone().unwrap_or_default();
         match obj {
-            Expr::Ident(name) if name == "this" => {
+            Expr::Ident(name, _) if name == "this" => {
                 let this_reg = self.vars.get("this").copied().unwrap_or(0);
                 let field_ptr = self.new_reg();
                 self.emit(TacInst::GetFieldPtr { dest: field_ptr, obj: this_reg, class: class_name, field: field.to_string() });
@@ -761,7 +761,7 @@ impl Lower {
                 self.emit(TacInst::Load { dest: result, addr: field_ptr });
                 Operand::Reg(result)
             }
-            Expr::Ident(var_name) => {
+            Expr::Ident(var_name, _) => {
                 let obj_class = self.resolve_object_class(var_name);
                 let obj_reg = self.reg_from_name(var_name);
                 let field_ptr = self.new_reg();
@@ -770,7 +770,7 @@ impl Lower {
                 self.emit(TacInst::Load { dest: result, addr: field_ptr });
                 Operand::Reg(result)
             }
-            Expr::Access { obj: inner_obj, field: inner_field } => {
+            Expr::Access { obj: inner_obj, field: inner_field, .. } => {
                 let inner_val = self.lower_access(inner_obj, inner_field);
                 let inner_reg = self.reg_from_op(&inner_val);
                 let inner_class = self.resolve_object_class_from_access(inner_obj, inner_field);
@@ -848,7 +848,7 @@ impl Lower {
         for stmt in &block.stmts {
             match stmt {
                 Stmt::Expr(Expr::Assign { target, .. }) => {
-                    if let Expr::Ident(name) = target.as_ref() {
+                    if let Expr::Ident(name, _) = target.as_ref() {
                         names.push(name.clone());
                     }
                 }
@@ -901,7 +901,7 @@ impl Lower {
 
     fn collect_captures_in_expr(&self, expr: &Expr, param_names: &[&str], local_names: &[String], out: &mut Vec<(String, Reg)>) {
         match expr {
-            Expr::Ident(name) => {
+            Expr::Ident(name, _) => {
                 if !param_names.contains(&name.as_str()) && !local_names.contains(name) {
                     if let Some(&reg) = self.vars.get(name) {
                         if !out.iter().any(|(n, _)| n == name) {
@@ -917,31 +917,31 @@ impl Lower {
             Expr::Unary { expr: e, .. } => {
                 self.collect_captures_in_expr(e, param_names, local_names, out);
             }
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 self.collect_captures_in_expr(callee, param_names, local_names, out);
                 for a in args { self.collect_captures_in_expr(a, param_names, local_names, out); }
             }
-            Expr::Index { obj, index } => {
+            Expr::Index { obj, index, .. } => {
                 self.collect_captures_in_expr(obj, param_names, local_names, out);
                 self.collect_captures_in_expr(index, param_names, local_names, out);
             }
             Expr::Access { obj, .. } => {
                 self.collect_captures_in_expr(obj, param_names, local_names, out);
             }
-            Expr::Assign { target, value } => {
+            Expr::Assign { target, value, .. } => {
                 self.collect_captures_in_expr(value, param_names, local_names, out);
-                if !matches!(target.as_ref(), Expr::Ident(_)) {
+                if !matches!(target.as_ref(), Expr::Ident(..)) {
                     self.collect_captures_in_expr(target, param_names, local_names, out);
                 }
             }
-            Expr::IfExpr { cond, then_block, else_block } => {
+            Expr::IfExpr { cond, then_block, else_block, .. } => {
                 self.collect_captures_in_expr(cond, param_names, local_names, out);
                 self.collect_captures_in_block(then_block, param_names, local_names, out);
                 if let Some(eb) = else_block {
                     self.collect_captures_in_block(eb, param_names, local_names, out);
                 }
             }
-            Expr::MatchExpr { expr: e, branches } => {
+            Expr::MatchExpr { expr: e, branches, .. } => {
                 self.collect_captures_in_expr(e, param_names, local_names, out);
                 for b in branches {
                     self.collect_captures_in_expr(&b.pattern, param_names, local_names, out);
@@ -971,6 +971,10 @@ fn member_name(m: &ClassMember) -> Option<String> {
     }
 }
 
+fn is_else_pattern(expr: &Expr) -> bool {
+    matches!(expr, Expr::Ident(name, _) if name == "else")
+}
+
 fn escape_llvm_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for byte in s.bytes() {
@@ -990,13 +994,13 @@ fn escape_llvm_string(s: &str) -> String {
 fn infer_type_from_args(args: &[Expr], _generics: &[String]) -> Option<Type> {
     // Infer generic type from the first argument
     match args.first()? {
-        Expr::Int(_) => Some(Type::Base(BaseType::I32)),
-        Expr::Float(_) => Some(Type::Base(BaseType::F64)),
-        Expr::String(_) => Some(Type::Base(BaseType::String)),
-        Expr::Bool(_) => Some(Type::Base(BaseType::Bool)),
-        Expr::Null => Some(Type::Base(BaseType::Null)),
-        Expr::Ident(_) => Some(Type::Base(BaseType::I32)),
-        Expr::Array(items) if !items.is_empty() => Some(Type::Array(Box::new(Type::Base(BaseType::I32)))),
+        Expr::Int(..) => Some(Type::Base(BaseType::I32)),
+        Expr::Float(..) => Some(Type::Base(BaseType::F64)),
+        Expr::String(..) => Some(Type::Base(BaseType::String)),
+        Expr::Bool(..) => Some(Type::Base(BaseType::Bool)),
+        Expr::Null(_) => Some(Type::Base(BaseType::Null)),
+        Expr::Ident(..) => Some(Type::Base(BaseType::I32)),
+        Expr::Array(items, _) if !items.is_empty() => Some(Type::Array(Box::new(Type::Base(BaseType::I32)))),
         _ => Some(Type::Base(BaseType::I32)),
     }
 }
@@ -1058,11 +1062,11 @@ fn substitute_in_expr(expr: &mut Expr, from: &str, to: &Type) {
             substitute_in_expr(right, from, to);
         }
         Expr::Unary { expr: e, .. } => substitute_in_expr(e, from, to),
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             substitute_in_expr(callee, from, to);
             for a in args { substitute_in_expr(a, from, to); }
         }
-        Expr::Assign { target: _, value } => {
+        Expr::Assign { target: _, value, .. } => {
             substitute_in_expr(value, from, to);
         }
         Expr::Cast { expr: e, ty, .. } => {
@@ -1072,7 +1076,7 @@ fn substitute_in_expr(expr: &mut Expr, from: &str, to: &Type) {
             }
         }
         Expr::Access { obj, .. } => { substitute_in_expr(obj, from, to); }
-        Expr::Index { obj, index } => {
+        Expr::Index { obj, index, .. } => {
             substitute_in_expr(obj, from, to);
             substitute_in_expr(index, from, to);
         }

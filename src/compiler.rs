@@ -29,8 +29,8 @@ pub fn compile_file(source_path: &str, output_path: &str, run: bool) {
     match SemanticAnalyzer::analyze(&program, &mut diagnostics) {
         Ok(_) => {}
         Err(errors) => {
-            for e in &errors {
-                eprintln!("error: {}", e);
+            for (msg, _) in &errors {
+                eprintln!("error: {}", msg);
             }
             diagnostics.print_all();
             std::process::exit(1);
