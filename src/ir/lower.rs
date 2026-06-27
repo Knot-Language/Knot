@@ -23,6 +23,8 @@ pub struct Lower {
     func_params: HashMap<String, Vec<Param>>,
     all_class_members: HashMap<String, Vec<ClassMember>>,
     imported_files: HashSet<String>,
+    generic_templates: HashMap<String, (Vec<String>, Box<Stmt>)>,
+    monomorphized: HashSet<String>,
 }
 
 struct SavedContext {
@@ -56,6 +58,8 @@ impl Lower {
             func_params: HashMap::new(),
             all_class_members: HashMap::new(),
             imported_files: HashSet::new(),
+            generic_templates: HashMap::new(),
+            monomorphized: HashSet::new(),
         };
 
         // First pass: collect func params and class members
@@ -194,17 +198,21 @@ impl Lower {
 
     fn lower_top_level(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::FuncDef { name, params, ret_ty, body, .. } => {
-                let prev = self.save_context(name, params.len());
-                self.current_ret_ty = ret_ty.clone();
-                self.reg_counter = 0;
-                for (i, p) in params.iter().enumerate() {
-                    let r = self.new_reg(); self.vars.insert(p.name.clone(), r);
-                    self.emit(TacInst::Param { dest: r, index: i });
+            Stmt::FuncDef { name, generics, params, ret_ty, body, .. } => {
+                if !generics.is_empty() {
+                    self.generic_templates.insert(name.clone(), (generics.clone(), Box::new(stmt.clone())));
+                } else {
+                    let prev = self.save_context(name, params.len());
+                    self.current_ret_ty = ret_ty.clone();
+                    self.reg_counter = 0;
+                    for (i, p) in params.iter().enumerate() {
+                        let r = self.new_reg(); self.vars.insert(p.name.clone(), r);
+                        self.emit(TacInst::Param { dest: r, index: i });
+                    }
+                    self.lower_block(body);
+                    if ret_ty.is_none() || matches!(ret_ty, Some(Type::Base(BaseType::Void))) { self.emit(TacInst::Ret(None)); }
+                    self.restore_context(prev);
                 }
-                self.lower_block(body);
-                if ret_ty.is_none() || matches!(ret_ty, Some(Type::Base(BaseType::Void))) { self.emit(TacInst::Ret(None)); }
-                self.restore_context(prev);
             }
             Stmt::ClassDef { name, mixins, abstract_class, members, .. } => {
                 let resolved = self.resolve_mixins(name, mixins, members);
@@ -681,7 +689,7 @@ impl Lower {
     }
 
     fn lower_call(&mut self, callee: &Expr, args: &[Expr]) -> Operand {
-        let (name, this_arg) = match callee {
+        let (mut name, this_arg) = match callee {
             Expr::Ident(s) => (s.clone(), None),
             Expr::Access { obj, field } => {
                 if let Expr::Ident(class_name) = obj.as_ref() {
@@ -696,10 +704,22 @@ impl Lower {
             _ => return Operand::Imm(0),
         };
 
+        // Monomorphize generic calls before lowering args
+        if let Some((generics, template)) = self.generic_templates.get(&name).cloned() {
+            if let Some(concrete_ty) = infer_type_from_args(args, &generics) {
+                let mono_name = format!("{}_{}", name, sanitize_type_name(&concrete_ty));
+                if self.monomorphized.insert(mono_name.clone()) {
+                    let mut substituted = (*template).clone();
+                    substitute_type_param(&mut substituted, &generics[0], &concrete_ty);
+                    self.lower_top_level(&substituted);
+                }
+                name = mono_name;
+            }
+        }
+
         let mut arg_ops = Vec::new();
         if let Some(this) = this_arg { arg_ops.push(this); }
 
-        // Fill default parameters
         let params_clone = self.func_params.get(&name).cloned();
         if let Some(func_params) = params_clone {
             for (i, param) in func_params.iter().enumerate() {
@@ -715,19 +735,9 @@ impl Lower {
             for arg in args { arg_ops.push(self.lower_expr(arg)); }
         }
 
-        // Check if this is a generic function call – create monomorphized version if needed
-        let actual_name = self.monomorphize_if_needed(&name);
-
         let dest = self.new_reg();
-        self.emit(TacInst::Call { dest: Some(dest), name: actual_name, args: arg_ops });
+        self.emit(TacInst::Call { dest: Some(dest), name, args: arg_ops });
         Operand::Reg(dest)
-    }
-
-    fn monomorphize_if_needed(&mut self, _name: &str) -> String {
-        // TODO: full monomorphization with type substitution
-        // For now, return the name as-is; the parser has already resolved
-        // generic calls to concrete function names during semantic analysis
-        _name.to_string()
     }
 
     fn lower_assign(&mut self, target: &Expr, value: &Expr) -> Operand {
@@ -1007,4 +1017,106 @@ fn escape_llvm_string(s: &str) -> String {
         }
     }
     out
+}
+
+fn infer_type_from_args(args: &[Expr], _generics: &[String]) -> Option<Type> {
+    // Infer generic type from the first argument
+    match args.first()? {
+        Expr::Int(_) => Some(Type::Base(BaseType::I32)),
+        Expr::Float(_) => Some(Type::Base(BaseType::F64)),
+        Expr::String(_) => Some(Type::Base(BaseType::String)),
+        Expr::Bool(_) => Some(Type::Base(BaseType::Bool)),
+        Expr::Null => Some(Type::Base(BaseType::Null)),
+        Expr::Ident(_) => Some(Type::Base(BaseType::I32)),
+        Expr::Array(items) if !items.is_empty() => Some(Type::Array(Box::new(Type::Base(BaseType::I32)))),
+        _ => Some(Type::Base(BaseType::I32)),
+    }
+}
+
+fn sanitize_type_name(ty: &Type) -> String {
+    match ty {
+        Type::Base(b) => format!("{:?}", b),
+        Type::Nullable(inner) => format!("Nullable{:?}", inner),
+        Type::Named(n) => n.clone(),
+        Type::Array(_) => "Array".to_string(),
+    }
+}
+
+fn substitute_type_param(stmt: &mut Stmt, from: &str, to: &Type) {
+    match stmt {
+        Stmt::FuncDef { name, generics, params, ret_ty, body } => {
+            generics.retain(|g| g != from);
+            for p in params.iter_mut() {
+                if let Some(ty) = &mut p.ty { substitute_type(ty, from, to); }
+            }
+            if let Some(ty) = ret_ty { substitute_type(ty, from, to); }
+            substitute_in_block(body, from, to);
+            if !name.contains('_') {
+                *name = format!("{}_{}", name, sanitize_type_name(to));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn substitute_in_block(block: &mut Block, from: &str, to: &Type) {
+    for stmt in block.stmts.iter_mut() {
+        substitute_in_stmt(stmt, from, to);
+    }
+}
+
+fn substitute_in_stmt(stmt: &mut Stmt, from: &str, to: &Type) {
+    match stmt {
+        Stmt::Expr(e) => substitute_in_expr(e, from, to),
+        Stmt::Return(Some(e)) => substitute_in_expr(e, from, to),
+        Stmt::If { cond, then_block, else_block } => {
+            substitute_in_expr(cond, from, to);
+            substitute_in_block(then_block, from, to);
+            if let Some(es) = else_block { substitute_in_stmt(es, from, to); }
+        }
+        Stmt::While { cond, body } => {
+            substitute_in_expr(cond, from, to);
+            substitute_in_block(body, from, to);
+        }
+        Stmt::Block(b) => substitute_in_block(b, from, to),
+        _ => {}
+    }
+}
+
+fn substitute_in_expr(expr: &mut Expr, from: &str, to: &Type) {
+    match expr {
+        Expr::Binary { left, right, .. } => {
+            substitute_in_expr(left, from, to);
+            substitute_in_expr(right, from, to);
+        }
+        Expr::Unary { expr: e, .. } => substitute_in_expr(e, from, to),
+        Expr::Call { callee, args } => {
+            substitute_in_expr(callee, from, to);
+            for a in args { substitute_in_expr(a, from, to); }
+        }
+        Expr::Assign { target: _, value } => {
+            substitute_in_expr(value, from, to);
+        }
+        Expr::Cast { expr: e, ty, .. } => {
+            substitute_in_expr(e, from, to);
+            if let Type::Named(n) = ty {
+                if n == from { *ty = to.clone(); }
+            }
+        }
+        Expr::Access { obj, .. } => { substitute_in_expr(obj, from, to); }
+        Expr::Index { obj, index } => {
+            substitute_in_expr(obj, from, to);
+            substitute_in_expr(index, from, to);
+        }
+        _ => {}
+    }
+}
+
+fn substitute_type(ty: &mut Type, from: &str, to: &Type) {
+    match ty {
+        Type::Named(n) if n == from => { *ty = to.clone(); }
+        Type::Nullable(inner) => substitute_type(inner, from, to),
+        Type::Array(inner) => substitute_type(inner, from, to),
+        _ => {}
+    }
 }
