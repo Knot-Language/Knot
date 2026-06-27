@@ -219,20 +219,16 @@ fn check_assign(
                 Some(info) => {
                     if let (Some(expected), Some(actual)) = (&info.ty, &val_ty) {
                         if !types_compatible(expected, actual) {
-                            if info.mutable {
-                                symbols.update_type(name, actual.clone());
-                            } else {
-                                errors.push(format!(
-                                    "type mismatch: cannot assign {:?} to {}: {:?}",
-                                    actual, name, expected
-                                ));
-                            }
+                            errors.push(format!(
+                                "type mismatch: cannot assign {:?} to {}: {:?}",
+                                actual, name, expected
+                            ));
                         }
                     }
                 }
                 None => {
                     let ty = val_ty.clone().unwrap_or(Type::Base(BaseType::Void));
-                    symbols.declare(name.clone(), Some(ty), false);
+                    symbols.declare(name.clone(), Some(ty));
                 }
             }
         }

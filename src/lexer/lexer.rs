@@ -260,7 +260,7 @@ impl Lexer {
         let keywords = [
             "abstract", "args", "as", "as!", "assert", "break", "catch", "class",
             "continue", "else", "enum", "false", "for", "func", "if", "import",
-            "in", "kwargs", "match", "mixin", "mut", "null", "operator", "private",
+            "in", "kwargs", "match", "mixin", "null", "operator", "private",
             "return", "static", "throw", "true", "try", "while", "wrap",
             "new", "delete", "Any",
         ];

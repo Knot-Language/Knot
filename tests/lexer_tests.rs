@@ -119,7 +119,7 @@ fn operators_multi_char() {
 #[test]
 fn keywords() {
     assert_tokens(
-        "func if else while for return class enum mixin static mut true false null break continue throw try catch match import as operator private abstract args kwargs wrap assert delete new",
+        "func if else while for return class enum mixin static true false null break continue throw try catch match import as operator private abstract args kwargs wrap assert delete new",
         vec![
             Token::Keyword("func".into()),
             Token::Keyword("if".into()),
@@ -131,7 +131,7 @@ fn keywords() {
             Token::Keyword("enum".into()),
             Token::Keyword("mixin".into()),
             Token::Keyword("static".into()),
-            Token::Keyword("mut".into()),
+
             Token::Keyword("true".into()),
             Token::Keyword("false".into()),
             Token::Keyword("null".into()),

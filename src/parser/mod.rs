@@ -845,7 +845,7 @@ impl Parser {
             }
         };
 
-        self.symbols.declare(name.clone(), None, false);
+        self.symbols.declare(name.clone(), None);
         self.symbols.push_scope();
 
         let generics = self.parse_generic_params();
@@ -922,7 +922,7 @@ impl Parser {
                 None
             };
 
-            self.symbols.declare(name.clone(), ty.clone(), false);
+            self.symbols.declare(name.clone(), ty.clone());
             params.push(Param { name, ty, default, is_args, is_kwargs });
 
             if self.is_op(",") {

@@ -101,7 +101,7 @@ impl SemanticAnalyzer {
                         crate::error::Span::new(1, 1),
                     );
                 }
-                self.symbols.declare(name.clone(), None, false);
+                self.symbols.declare(name.clone(), None);
                 None
             }
             Stmt::Import { .. } => None,
@@ -130,7 +130,7 @@ impl SemanticAnalyzer {
                 for catch in catches {
                     self.symbols.push_scope();
                     if let Some(var) = &catch.var {
-                        self.symbols.declare(var.clone(), catch.ty.clone(), false);
+                        self.symbols.declare(var.clone(), catch.ty.clone());
                     }
                     for s in &catch.body.stmts {
                         self.analyze_stmt(s);
@@ -171,12 +171,12 @@ impl SemanticAnalyzer {
         let prev_ret = self.return_type.clone();
         self.return_type = ret_ty.clone();
 
-        self.symbols.declare(name.to_string(), None, false);
+        self.symbols.declare(name.to_string(), None);
         self.symbols.push_scope();
 
         for param in params {
             let ty = param.ty.clone().unwrap_or(Type::Base(BaseType::Void));
-            self.symbols.declare(param.name.clone(), Some(ty), false);
+            self.symbols.declare(param.name.clone(), Some(ty));
         }
 
         self.analyze_block(body);
@@ -214,8 +214,6 @@ impl SemanticAnalyzer {
             }
         }
 
-        let pre_snap = self.symbols.snapshot_mut_types();
-
         self.symbols.push_scope();
         for stmt in &then_block.stmts {
             self.analyze_stmt(stmt);
@@ -227,8 +225,6 @@ impl SemanticAnalyzer {
             self.analyze_stmt(else_stmt);
             self.symbols.pop_scope();
         }
-
-        self.symbols.unify_mut_types(&pre_snap);
     }
 
     fn analyze_while(&mut self, cond: &Expr, body: &Block) {
@@ -239,21 +235,17 @@ impl SemanticAnalyzer {
             }
         }
 
-        let pre_snap = self.symbols.snapshot_mut_types();
-
         self.symbols.push_scope();
         for stmt in &body.stmts {
             self.analyze_stmt(stmt);
         }
         self.symbols.pop_scope();
-
-        self.symbols.unify_mut_types(&pre_snap);
     }
 
     fn analyze_for(&mut self, var: &str, iter: &Expr, body: &Block) {
         self.symbols.push_scope();
         self.symbols
-            .declare(var.to_string(), Some(Type::Base(BaseType::I32)), false);
+            .declare(var.to_string(), Some(Type::Base(BaseType::I32)));
 
         let _iter_ty = self.analyze_expr(iter);
 
@@ -264,7 +256,7 @@ impl SemanticAnalyzer {
     }
 
     fn analyze_class_def(&mut self, name: &str, _members: &[ClassMember]) {
-        self.symbols.declare(name.to_string(), None, false);
+        self.symbols.declare(name.to_string(), None);
     }
 
     // ── Expressions (delegated to check.rs) ──────────────

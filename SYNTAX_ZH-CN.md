@@ -71,7 +71,7 @@ abstract  Any      args     as       as!
 assert    break    catch    class    continue
 delete    else     enum     false    for
 func      if       import   in       kwargs
-match     mixin    mut      new      null
+match     mixin    new      null
 operator  private  return   static   throw
 true      try      while    wrap
 ```
@@ -231,7 +231,7 @@ pi: F32 = 3.14         // 标注为 F32
 
 ### 类型锁定
 
-非 `mut` 变量的类型一旦确定，后续赋值必须同类型：
+变量的类型一旦确定，后续赋值必须同类型：
 
 ```knot
 a = 10                 // 锁定为 I32
@@ -240,16 +240,6 @@ a = 20                 // ✓ 合法
 ```
 
 数值类型之间有隐式兼容（`I32` 可隐式转换到 `F64` 等）。
-
-### mut 变量
-
-`mut` 关键字声明的变量可在不同类型间切换。每次赋值新值时旧值自动释放：
-
-```knot
-mut x = 42             // x 当前为 I32
-x = "hello"            // x 切换为 String，旧 I32 自动释放
-x = true               // x 切换为 Bool
-```
 
 ### 可空类型
 
@@ -880,9 +870,7 @@ func main() -> I32 {
 `Any` 关键字表示动态类型，可接受任意类型的值，与所有类型兼容：
 
 ```knot
-mut x: Any = 42
-x = "hello"
-x = true
+x: Any = 42
 
 func process(data: Any) {
     // data 可以是任何类型

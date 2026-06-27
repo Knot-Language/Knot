@@ -73,7 +73,7 @@ abstract  Any      args     as       as!
 assert    break    catch    class    continue
 delete    else     enum     false    for
 func      if       import   in       kwargs
-match     mixin    mut      new      null
+match     mixin    new      null
 operator  private  return   static   throw
 true      try      while    wrap
 ```
@@ -231,7 +231,7 @@ pi: F32 = 3.14         // explicit F32
 
 ### Type Locking
 
-Once a non-`mut` variable's type is determined, subsequent assignments must match:
+Once a variable's type is determined, subsequent assignments must match:
 
 ```knot
 a = 10                 // locked to I32
@@ -240,16 +240,6 @@ a = 20                 // ✓ valid
 ```
 
 Numeric types have implicit compatibility (I32 can widen to F64, etc.).
-
-### mut Variables
-
-Variables declared with `mut` can hold different types over their lifetime. The old value is automatically freed on reassignment:
-
-```knot
-mut x = 42             // currently I32
-x = "hello"            // now String, old I32 freed
-x = true               // now Bool
-```
 
 ### Nullable Types
 
@@ -888,9 +878,7 @@ The `Any` keyword represents a dynamic type that can hold any value and is
 compatible with all types:
 
 ```knot
-mut x: Any = 42
-x = "hello"
-x = true
+x: Any = 42
 
 func process(data: Any) {
     // data can be anything
