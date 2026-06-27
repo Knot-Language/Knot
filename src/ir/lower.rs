@@ -658,10 +658,12 @@ impl Lower {
 
     fn lower_assign(&mut self, target: &Expr, value: &Expr) -> Operand {
         let val = self.lower_expr(value);
-        let dest_reg = match target {
+
+        let (dest_reg, target_name) = match target {
             Expr::Ident(name) => {
-                if let Some(&r) = self.vars.get(name) { r }
-                else { let r = self.new_reg(); self.vars.insert(name.clone(), r); r }
+                let r = if let Some(&r) = self.vars.get(name) { r }
+                else { let r = self.new_reg(); self.vars.insert(name.clone(), r); r };
+                (r, Some(name.clone()))
             }
             Expr::Access { obj, field } => {
                 let obj_reg = self.lower_expr(obj);
@@ -671,10 +673,29 @@ impl Lower {
                 self.emit(TacInst::Store { addr: field_ptr, src: val.clone() });
                 return val;
             }
-            _ => self.new_reg(),
+            _ => (self.new_reg(), None),
         };
+
+        // If target has Any type, pack the value into tagged union
+        if let Some(ref name) = target_name {
+            if let Some(ty) = self.var_types.get(name) {
+                if matches!(ty, Type::Base(BaseType::Any)) {
+                    let tag = crate::ir::tac::type_tag(&self.infer_type_of(&val));
+                    let packed = self.new_reg();
+                    self.emit(TacInst::PackAny { dest: packed, tag, value: val });
+                    self.emit(TacInst::Mov { dest: dest_reg, src: Operand::Reg(packed) });
+                    self.var_types.insert(name.clone(), Type::Base(BaseType::Any));
+                    return Operand::Reg(dest_reg);
+                }
+            }
+        }
+
         self.emit(TacInst::Mov { dest: dest_reg, src: val });
         Operand::Reg(dest_reg)
+    }
+
+    fn infer_type_of(&self, _op: &Operand) -> Type {
+        Type::Base(BaseType::I32)
     }
 
     fn lower_access(&mut self, obj: &Expr, field: &str) -> Operand {

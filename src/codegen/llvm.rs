@@ -9,6 +9,7 @@ impl LlvmBackend {
         out.push_str("declare i32 @puts(i8*)\n");
         out.push_str("declare i32 @printf(i8*, ...)\n");
         out.push_str("@knot_exception = global i32 0\n");
+        out.push_str("%Any = type { i64, i64 }\n\n");
 
         for (name, val) in &program.strings {
             let len = val.len() + 1;
@@ -316,6 +317,51 @@ fn emit_insts(
             }
 
             TacInst::Free { .. } => {
+                pos += 1;
+            }
+
+            TacInst::PackAny { dest, tag, value } => {
+                let any_ptr = format!("%r{}_any", dest);
+                out.push_str(&format!("  {} = alloca %Any\n", any_ptr));
+                let v = fmt_op(value, ctx);
+                let vt = op_ty(value, ctx);
+                let val_coerced = if vt == "double" {
+                    let tmp = format!("%r{}_f2i", dest);
+                    out.push_str(&format!("  {} = bitcast double {} to i64\n", tmp, v));
+                    tmp
+                } else if vt == "ptr" {
+                    let tmp = format!("%r{}_p2i", dest);
+                    out.push_str(&format!("  {} = ptrtoint ptr {} to i64\n", tmp, v));
+                    tmp
+                } else {
+                    let tmp = format!("%r{}_ext", dest);
+                    out.push_str(&format!("  {} = sext i32 {} to i64\n", tmp, v));
+                    tmp
+                };
+                let tag_ptr = format!("%r{}_tagp", dest);
+                out.push_str(&format!("  {} = getelementptr inbounds %Any, ptr {}, i32 0, i32 0\n", tag_ptr, any_ptr));
+                out.push_str(&format!("  store i64 {}, ptr {}\n", tag, tag_ptr));
+                let val_ptr = format!("%r{}_valp", dest);
+                out.push_str(&format!("  {} = getelementptr inbounds %Any, ptr {}, i32 0, i32 1\n", val_ptr, any_ptr));
+                out.push_str(&format!("  store i64 {}, ptr {}\n", val_coerced, val_ptr));
+                out.push_str(&format!("  %r{} = load %Any, ptr {}\n", dest, any_ptr));
+                ctx.set(*dest, "any");
+                pos += 1;
+            }
+
+            TacInst::UnpackTag { dest, src } => {
+                let src_str = fmt_op(&Operand::Reg(*src), ctx);
+                out.push_str(&format!("  %r{}_tag = extractvalue %Any {}, 0\n", dest, src_str));
+                out.push_str(&format!("  %r{} = trunc i64 %r{}_tag to i32\n", dest, dest));
+                ctx.set(*dest, "i32");
+                pos += 1;
+            }
+
+            TacInst::UnpackVal { dest, src } => {
+                let src_str = fmt_op(&Operand::Reg(*src), ctx);
+                out.push_str(&format!("  %r{}_val = extractvalue %Any {}, 1\n", dest, src_str));
+                out.push_str(&format!("  %r{} = trunc i64 %r{}_val to i32\n", dest, dest));
+                ctx.set(*dest, "i32");
                 pos += 1;
             }
 

@@ -48,6 +48,10 @@ fn check_binary(
     match (lt, rt) {
         (Some(l), Some(r)) => match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                if matches!(&l, Type::Base(BaseType::Any)) || matches!(&r, Type::Base(BaseType::Any)) {
+                    errors.push("cannot perform arithmetic on Any; use 'as' to cast first".to_string());
+                    return None;
+                }
                 if !is_numeric(&l) {
                     errors.push(format!("left operand of {:?} must be numeric, got {:?}", op, l));
                 }
@@ -57,6 +61,10 @@ fn check_binary(
                 Some(wider_type(&l, &r))
             }
             BinOp::Shl | BinOp::Shr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
+                if matches!(&l, Type::Base(BaseType::Any)) || matches!(&r, Type::Base(BaseType::Any)) {
+                    errors.push("cannot perform bitwise operation on Any; use 'as' to cast first".to_string());
+                    return None;
+                }
                 if !is_integer(&l) {
                     errors.push(format!(
                         "left operand of {:?} must be integer, got {:?}",
@@ -72,6 +80,10 @@ fn check_binary(
                 Some(Type::Base(BaseType::I32))
             }
             BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
+                if matches!(&l, Type::Base(BaseType::Any)) || matches!(&r, Type::Base(BaseType::Any)) {
+                    errors.push("cannot compare Any values directly; use 'as' to cast first".to_string());
+                    return None;
+                }
                 Some(Type::Base(BaseType::Bool))
             }
             BinOp::And | BinOp::Or => {
