@@ -45,7 +45,10 @@ impl Parser {
     }
 
     fn current_span(&self) -> Span {
-        let (line, col) = self.positions.get(self.pos).copied().unwrap_or((1, 1));
+        let (line, col) = self.positions
+            .get(self.pos.min(self.positions.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or((1, 1));
         Span::new(line, col)
     }
 
@@ -66,10 +69,18 @@ impl Parser {
     }
 
     fn peek(&self) -> &Token {
-        &self.tokens[self.pos]
+        if self.pos >= self.tokens.len() {
+            // Return a static EOF reference; safe because tokens always ends with EOF
+            &self.tokens[self.tokens.len() - 1]
+        } else {
+            &self.tokens[self.pos]
+        }
     }
 
     fn advance(&mut self) -> Token {
+        if self.pos >= self.tokens.len() {
+            return Token::Eof;
+        }
         let t = self.tokens[self.pos].clone();
         self.pos += 1;
         t
