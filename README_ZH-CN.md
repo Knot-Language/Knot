@@ -1,5 +1,7 @@
 # Knot
 
+![logo](logo.svg)
+
 > [English](README.md)
 
 **Knot** 是一门极简、显式、零开销的系统编程语言。

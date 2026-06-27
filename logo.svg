@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F7DF3"/>
+      <stop offset="100%" stop-color="#1E2B4F"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- 左三角 -->
+  <polygon points="70,20 140,140 20,140" fill="none" stroke="url(#g)" stroke-width="16" stroke-linejoin="round"/>
+  <!-- 右三角（倒置，交错形成结） -->
+  <polygon points="130,180 60,60 180,60" fill="none" stroke="url(#g)" stroke-width="16" stroke-linejoin="round"/>
+  
+  <!-- 中心点 -->
+  <circle cx="100" cy="100" r="6" fill="#A3BFFA"/>
+</svg>

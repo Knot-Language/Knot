@@ -1,5 +1,7 @@
 # Knot
 
+![logo](logo.svg)
+
 > [中文](README_ZH-CN.md)
 
 **Knot** is a minimalist, explicit, zero-overhead systems programming language.
