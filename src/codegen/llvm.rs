@@ -52,7 +52,8 @@ fn llvm_type(ty: &crate::parser::ast::Type) -> &'static str {
     use crate::parser::ast::*;
     match ty {
         Type::Base(base) => match base {
-            BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64 => "i32",
+            BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64
+            | BaseType::U8 | BaseType::U16 | BaseType::U32 | BaseType::U64 => "i32",
             BaseType::F32 | BaseType::F64 => "double",
             _ => "i32",
         },
@@ -198,23 +199,27 @@ fn emit_insts(
             }
 
             TacInst::JmpIf { cond, label } => {
-                let c = fmt_op(cond, ctx);
-                let ty = op_ty(cond, ctx);
+                let negated = matches!(cond, Operand::Not(_));
+                let inner = if let Operand::Not(i) = cond { i.as_ref() } else { cond };
+                let c = fmt_op(inner, ctx);
+                let ty = op_ty(inner, ctx);
                 let next_is_label = pos + 1 < func.insts.len() && matches!(func.insts[pos + 1], TacInst::Label(_));
+
+                let (cmp_op, zero) = if negated {
+                    (if ty == "double" { "fcmp oeq" } else { "icmp eq" }, if ty == "double" { "0.0" } else { "0" })
+                } else {
+                    (if ty == "double" { "fcmp one" } else { "icmp ne" }, if ty == "double" { "0.0" } else { "0" })
+                };
 
                 if next_is_label {
                     let next_label = match &func.insts[pos + 1] {
                         TacInst::Label(l) => l.clone(),
                         _ => unreachable!(),
                     };
-                    let cmp_op = if ty == "double" { "fcmp one" } else { "icmp ne" };
-                    let zero = if ty == "double" { "0.0" } else { "0" };
                     out.push_str(&format!("  %cmp_{} = {} {} {}, {}\n", pos, cmp_op, ty, c, zero));
                     out.push_str(&format!("  br i1 %cmp_{}, label %{}, label %{}\n", pos, label, next_label));
                 } else {
                     let merge = format!("merge_{}", pos);
-                    let cmp_op = if ty == "double" { "fcmp one" } else { "icmp ne" };
-                    let zero = if ty == "double" { "0.0" } else { "0" };
                     out.push_str(&format!("  %cmp_{} = {} {} {}, {}\n", pos, cmp_op, ty, c, zero));
                     out.push_str(&format!("  br i1 %cmp_{}, label %{}, label %{}\n", pos, label, merge));
                     out.push_str(&format!("{}:\n", merge));
@@ -296,6 +301,17 @@ fn emit_insts(
                 pos += 1;
             }
 
+            TacInst::Alloc { dest, ty } => {
+                let ll_ty = llvm_type(ty);
+                out.push_str(&format!("  %r{} = alloca {}\n", dest, ll_ty));
+                ctx.set(*dest, "ptr");
+                pos += 1;
+            }
+
+            TacInst::Free { .. } => {
+                pos += 1;
+            }
+
             TacInst::Call { dest, name, args } => {
                 let mut arg_strs = Vec::new();
                 for a in args {
@@ -311,8 +327,6 @@ fn emit_insts(
                 }
                 pos += 1;
             }
-
-            _ => { pos += 1; }
         }
     }
     pos
@@ -340,7 +354,12 @@ fn emit_cmp(out: &mut String, dest: Reg, lhs: &Operand, rhs: &Operand, int_op: &
 }
 
 fn op_ty(op: &Operand, ctx: &Ctx) -> String {
-    match op { Operand::F64(_) => "double".into(), Operand::Reg(r) => ctx.get(*r).into(), _ => "i32".into() }
+    match op {
+        Operand::F64(_) => "double".into(),
+        Operand::Not(inner) => op_ty(inner, ctx),
+        Operand::Reg(r) => ctx.get(*r).into(),
+        _ => "i32".into(),
+    }
 }
 
 fn bin_ty(lhs: &Operand, rhs: &Operand, ctx: &Ctx) -> String {

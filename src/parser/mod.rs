@@ -98,7 +98,9 @@ impl Parser {
     }
 
     fn parse_top_level(&mut self) -> Stmt {
-        if self.is_kw("func") {
+        if self.is_op("@") {
+            self.parse_wrap_annotation()
+        } else if self.is_kw("func") {
             self.parse_func_def()
         } else if self.is_kw("class") || self.is_kw("abstract") {
             self.parse_class_def()
@@ -570,6 +572,41 @@ impl Parser {
         }
     }
 
+    fn parse_wrap_annotation(&mut self) -> Stmt {
+        self.advance(); // "@"
+        let wrap_expr = self.parse_expr(); // may include (args)
+        let (callee_ident, mut extra_args) = match &wrap_expr {
+            Expr::Call { callee, args } => (callee.clone(), args.clone()),
+            other => (Box::new(other.clone()), vec![]),
+        };
+
+        let stmt = if self.is_kw("func") {
+            self.parse_func_def()
+        } else {
+            self.parse_stmt()
+        };
+
+        match stmt {
+            Stmt::FuncDef { name, params, body, .. } => {
+                let mut args = vec![Expr::Lambda { params, body }];
+                args.append(&mut extra_args);
+                Stmt::Expr(Expr::Assign {
+                    target: Box::new(Expr::Ident(name)),
+                    value: Box::new(Expr::Call { callee: callee_ident, args }),
+                })
+            }
+            Stmt::Expr(Expr::Assign { target, value }) => {
+                let mut args = vec![*value];
+                args.append(&mut extra_args);
+                Stmt::Expr(Expr::Assign {
+                    target,
+                    value: Box::new(Expr::Call { callee: callee_ident, args }),
+                })
+            }
+            other => other,
+        }
+    }
+
     fn parse_wrap_def(&mut self) -> ClassMember {
         self.advance(); // "wrap"
         let name = self.parse_ident();
@@ -766,6 +803,10 @@ impl Parser {
                 "I16" => Type::Base(BaseType::I16),
                 "I32" => Type::Base(BaseType::I32),
                 "I64" => Type::Base(BaseType::I64),
+                "U8" => Type::Base(BaseType::U8),
+                "U16" => Type::Base(BaseType::U16),
+                "U32" => Type::Base(BaseType::U32),
+                "U64" => Type::Base(BaseType::U64),
                 "F32" => Type::Base(BaseType::F32),
                 "F64" => Type::Base(BaseType::F64),
                 "String" => Type::Base(BaseType::String),
@@ -917,6 +958,29 @@ impl Parser {
 
     fn parse_prefix(&mut self) -> Expr {
         match self.peek().clone() {
+            Token::Operator(s) if s == "@" => {
+                self.advance();
+                let expr = self.parse_expr_bp(90);
+                match expr {
+                    Expr::Call { callee, mut args } => {
+                        // @func(x) → func(func, x)
+                        // @obj.m(x) → obj.m(obj, x)
+                        match callee.as_ref() {
+                            Expr::Access { obj, .. } => {
+                                args.insert(0, obj.as_ref().clone());
+                            }
+                            _ => {
+                                args.insert(0, callee.as_ref().clone());
+                            }
+                        }
+                        Expr::Call { callee, args }
+                    }
+                    other => {
+                        // @x → x(x)
+                        Expr::Call { callee: Box::new(other.clone()), args: vec![other] }
+                    }
+                }
+            }
             Token::Operator(s) if s == "-" || s == "!" || s == "~" || s == "++" || s == "--" => {
                 if s == "++" || s == "--" {
                     let op = if s == "++" { BinOp::Add } else { BinOp::Sub };
@@ -928,18 +992,18 @@ impl Parser {
                         value: Box::new(Expr::Binary { op, left: Box::new(target), right: Box::new(one) }),
                     }
                 } else {
-                let op = match s.as_str() {
-                    "-" => UnaryOp::Neg,
-                    "!" => UnaryOp::Not,
-                    "~" => UnaryOp::BitNot,
-                    _ => unreachable!(),
-                };
-                self.advance();
-                let expr = self.parse_expr_bp(85);
-                Expr::Unary {
-                    op,
-                    expr: Box::new(expr),
-                }
+                    let op = match s.as_str() {
+                        "-" => UnaryOp::Neg,
+                        "!" => UnaryOp::Not,
+                        "~" => UnaryOp::BitNot,
+                        _ => unreachable!(),
+                    };
+                    self.advance();
+                    let expr = self.parse_expr_bp(85);
+                    Expr::Unary {
+                        op,
+                        expr: Box::new(expr),
+                    }
                 }
             }
             Token::Number(n) => {
@@ -995,7 +1059,7 @@ impl Parser {
                         };
                         return Expr::Lambda { params: vec![], body };
                     }
-                    return Expr::Call { callee: Box::new(Expr::Ident("".into())), args: vec![] };
+                    return Expr::Null;
                 }
                 // Try lambda: (Identifier, ...) -> ...
                 if self.try_parse_lambda() {

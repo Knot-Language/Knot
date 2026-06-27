@@ -26,7 +26,19 @@ cargo build --release
 ### Compile & Run
 
 ```bash
-knot hello.knot --run
+knot run hello.knot
+```
+
+Or build only:
+
+```bash
+knot build hello.knot -o hello.exe
+```
+
+Create a new project:
+
+```bash
+knot new myapp
 ```
 
 ### Examples
@@ -55,14 +67,17 @@ func main() -> I32 {
 ## CLI
 
 ```
-knot <source.knot> [-o output.exe] [--run]
+knot new <name>                 Create a new project
+knot build <source> [-o <exe>]  Compile a source file
+knot run <source> [-o <exe>]    Compile and run a source file
+knot tie [package]              (not yet implemented)
+knot untie [package]            (not yet implemented)
 ```
 
 | Option | Description |
 |--------|-------------|
-| `<source>` | Knot source file |
-| `-o, --output` | Output executable path |
-| `--run` | Run after compilation |
+| `<source>` | Knot source file (.knot) |
+| `-o, --output` | Output executable path (default: `<source>.exe`) |
 | `-h, --help` | Print help |
 | `-V, --version` | Print version |
 

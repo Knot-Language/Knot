@@ -163,7 +163,7 @@ impl Lexer {
 
         if radix != 10 {
             let clean: String = raw.chars().filter(|&c| c != '_').collect();
-            if clean.is_empty() || clean == "-" {
+            if clean.is_empty() {
                 return Token::Error("numeric literal without digits".to_string());
             }
             let val = match i64::from_str_radix(&clean, radix) {
@@ -435,24 +435,22 @@ impl Lexer {
     }
 
     pub fn next(&mut self) -> Token {
-        loop {
-            if let Some(err) = self.skip_whitespace() {
-                return err;
-            }
+        if let Some(err) = self.skip_whitespace() {
+            return err;
+        }
 
-            match self.peek() {
-                None => return Token::Eof,
-                Some('\n') => {
-                    self.advance();
-                    return Token::NewLine;
-                }
-                Some(c) if c.is_ascii_digit() => return self.read_number(),
-                Some(c) if c.is_alphabetic() || c == '_' => return self.read_ident_or_keyword(),
-                Some('"') => return self.read_string(),
-                Some('\'') => return self.read_raw_string('\''),
-                Some('`') => return self.read_raw_string('`'),
-                Some(_) => return self.read_operator(),
+        match self.peek() {
+            None => Token::Eof,
+            Some('\n') => {
+                self.advance();
+                Token::NewLine
             }
+            Some(c) if c.is_ascii_digit() => self.read_number(),
+            Some(c) if c.is_alphabetic() || c == '_' => self.read_ident_or_keyword(),
+            Some('"') => self.read_string(),
+            Some('\'') => self.read_raw_string('\''),
+            Some('`') => self.read_raw_string('`'),
+            Some(_) => self.read_operator(),
         }
     }
 }
@@ -474,7 +472,7 @@ pub fn tokenize(source: &str) -> Vec<Token> {
 fn is_digit(c: char, radix: u32) -> bool {
     match radix {
         2 => c == '0' || c == '1',
-        8 => c >= '0' && c <= '7',
+        8 => ('0'..='7').contains(&c),
         10 => c.is_ascii_digit(),
         16 => c.is_ascii_hexdigit(),
         _ => false,

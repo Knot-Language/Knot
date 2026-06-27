@@ -145,20 +145,26 @@ fn check_call(
     errors: &mut Vec<String>,
 ) -> Option<Type> {
     let name = match callee {
-        Expr::Ident(s) => s.clone(),
-        _ => {
-            errors.push("callee must be an identifier".to_string());
-            return None;
+        Expr::Ident(s) => Some(s.clone()),
+        Expr::Access { obj, field } => {
+            if let Expr::Ident(class_name) = obj.as_ref() {
+                Some(format!("{}__{}", class_name, field))
+            } else {
+                None
+            }
         }
+        _ => None,
     };
-    let fn_ty = symbols.lookup(&name).and_then(|info| info.ty.clone());
     for arg in args {
         analyze_expr(arg, symbols, errors);
     }
-    fn_ty.or_else(|| {
-        errors.push(format!("undefined function: {}", name));
-        None
-    })
+    if let Some(n) = name {
+        let fn_ty = symbols.lookup(&n).and_then(|info| info.ty.clone());
+        if fn_ty.is_some() {
+            return fn_ty;
+        }
+    }
+    None
 }
 
 fn check_index(
@@ -290,6 +296,10 @@ fn is_integer(ty: &Type) -> bool {
             | Type::Base(BaseType::I16)
             | Type::Base(BaseType::I32)
             | Type::Base(BaseType::I64)
+            | Type::Base(BaseType::U8)
+            | Type::Base(BaseType::U16)
+            | Type::Base(BaseType::U32)
+            | Type::Base(BaseType::U64)
     )
 }
 
@@ -300,6 +310,10 @@ fn is_numeric(ty: &Type) -> bool {
             | Type::Base(BaseType::I16)
             | Type::Base(BaseType::I32)
             | Type::Base(BaseType::I64)
+            | Type::Base(BaseType::U8)
+            | Type::Base(BaseType::U16)
+            | Type::Base(BaseType::U32)
+            | Type::Base(BaseType::U64)
             | Type::Base(BaseType::F32)
             | Type::Base(BaseType::F64)
     )
@@ -326,7 +340,9 @@ fn wider_type(a: &Type, b: &Type) -> Type {
         (Type::Base(BaseType::F64), _) | (_, Type::Base(BaseType::F64)) => Type::Base(BaseType::F64),
         (Type::Base(BaseType::F32), _) | (_, Type::Base(BaseType::F32)) => Type::Base(BaseType::F32),
         (Type::Base(BaseType::I64), _) | (_, Type::Base(BaseType::I64)) => Type::Base(BaseType::I64),
+        (Type::Base(BaseType::U64), _) | (_, Type::Base(BaseType::U64)) => Type::Base(BaseType::U64),
         (Type::Base(BaseType::I32), _) | (_, Type::Base(BaseType::I32)) => Type::Base(BaseType::I32),
+        (Type::Base(BaseType::U32), _) | (_, Type::Base(BaseType::U32)) => Type::Base(BaseType::U32),
         _ => a.clone(),
     }
 }

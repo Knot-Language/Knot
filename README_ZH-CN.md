@@ -26,7 +26,19 @@ cargo build --release
 ### 编译运行
 
 ```bash
-knot hello.knot --run
+knot run hello.knot
+```
+
+或仅编译：
+
+```bash
+knot build hello.knot -o hello.exe
+```
+
+创建新项目：
+
+```bash
+knot new myapp
 ```
 
 ### 示例
@@ -55,14 +67,17 @@ func main() -> I32 {
 ## 命令行
 
 ```
-knot <source.knot> [-o output.exe] [--run]
+knot new <name>                 创建新项目
+knot build <source> [-o <exe>]  编译源文件
+knot run <source> [-o <exe>]    编译并运行源文件
+knot tie [package]              (尚未实现)
+knot untie [package]            (尚未实现)
 ```
 
 | 参数 | 说明 |
 |------|------|
-| `<source>` | Knot 源文件 |
-| `-o, --output` | 输出可执行文件路径 |
-| `--run` | 编译后立即运行 |
+| `<source>` | Knot 源文件 (.knot) |
+| `-o, --output` | 输出可执行文件路径（默认：`<source>.exe`） |
 | `-h, --help` | 帮助信息 |
 | `-V, --version` | 版本信息 |
 

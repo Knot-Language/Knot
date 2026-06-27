@@ -114,6 +114,88 @@ impl Lower {
         self.current_ret_ty = prev_ret;
     }
 
+    fn lower_constructor(
+        &mut self,
+        func_name: &str,
+        class_name: &str,
+        params: &[Param],
+        body: &Block,
+    ) {
+        let prev_func = std::mem::replace(
+            &mut self.func,
+            Function {
+                name: func_name.to_string(),
+                params: params.len(),
+                insts: Vec::new(),
+            },
+        );
+        let prev_vars = std::mem::take(&mut self.vars);
+        let prev_var_types = std::mem::take(&mut self.var_types);
+        let prev_class = self.current_class.clone();
+        self.current_class = Some(class_name.to_string());
+        let prev_ret = self.current_ret_ty.clone();
+        self.current_ret_ty = None;
+        self.reg_counter = 0;
+
+        for (i, param) in params.iter().enumerate() {
+            let r = self.new_reg();
+            self.vars.insert(param.name.clone(), r);
+            self.emit(TacInst::Param { dest: r, index: i });
+        }
+
+        let this_reg = self.new_reg();
+        self.vars.insert("this".to_string(), this_reg);
+        self.emit(TacInst::Alloc { dest: this_reg, ty: Type::Named(class_name.to_string()) });
+
+        self.lower_block(body);
+        self.emit(TacInst::Ret(Some(Operand::Reg(this_reg))));
+
+        let finished_func = std::mem::replace(&mut self.func, prev_func);
+        self.temp_funcs.push(finished_func);
+        self.vars = prev_vars;
+        self.var_types = prev_var_types;
+        self.current_class = prev_class;
+        self.current_ret_ty = prev_ret;
+    }
+
+    fn lower_destructor(
+        &mut self,
+        func_name: &str,
+        class_name: &str,
+        body: &Block,
+    ) {
+        let prev_func = std::mem::replace(
+            &mut self.func,
+            Function {
+                name: func_name.to_string(),
+                params: 1,
+                insts: Vec::new(),
+            },
+        );
+        let prev_vars = std::mem::take(&mut self.vars);
+        let prev_var_types = std::mem::take(&mut self.var_types);
+        let prev_class = self.current_class.clone();
+        self.current_class = Some(class_name.to_string());
+        let prev_ret = self.current_ret_ty.clone();
+        self.current_ret_ty = None;
+        self.reg_counter = 0;
+
+        let this_reg = self.new_reg();
+        self.vars.insert("this".to_string(), this_reg);
+        self.emit(TacInst::Param { dest: this_reg, index: 0 });
+
+        self.lower_block(body);
+        self.emit(TacInst::Free { src: this_reg });
+        self.emit(TacInst::Ret(None));
+
+        let finished_func = std::mem::replace(&mut self.func, prev_func);
+        self.temp_funcs.push(finished_func);
+        self.vars = prev_vars;
+        self.var_types = prev_var_types;
+        self.current_class = prev_class;
+        self.current_ret_ty = prev_ret;
+    }
+
     fn lower_access(&mut self, obj: &Expr, field: &str) -> Operand {
         let _obj_op = self.lower_expr(obj);
         let class_name = match &self.current_class {
@@ -228,8 +310,15 @@ impl Lower {
                             let func_name = format!("{}__wrap_{}", name, wname);
                             self.lower_method(&func_name, true, params, &None, body);
                         }
-                        ClassMember::Mixin(_) | ClassMember::AbstractMethod { .. }
-                        | ClassMember::New { .. } | ClassMember::Delete { .. } => {}
+                        ClassMember::New { params, body, .. } => {
+                            let func_name = format!("{}__new", name);
+                            self.lower_constructor(&func_name, name, params, body);
+                        }
+                        ClassMember::Delete { body, .. } => {
+                            let func_name = format!("{}__delete", name);
+                            self.lower_destructor(&func_name, name, body);
+                        }
+                        ClassMember::Mixin(_) | ClassMember::AbstractMethod { .. } => {}
                     }
                 }
 
@@ -344,25 +433,48 @@ impl Lower {
         let prev_break = self.break_label.clone();
         self.break_label = Some(end_label.clone());
 
-        let iter_val = self.lower_expr(iter);
-        let index_reg = self.new_reg();
-        self.emit(TacInst::Mov {
-            dest: index_reg,
-            src: iter_val,
-        });
+        let start_val = match iter {
+            Expr::Binary { op: BinOp::Range, left, right } => {
+                let start = self.lower_expr(left);
+                let end = self.lower_expr(right);
+
+                let index_reg = self.new_reg();
+                self.emit(TacInst::Mov {
+                    dest: index_reg,
+                    src: start,
+                });
+
+                let max_reg = self.new_reg();
+                self.emit(TacInst::Mov {
+                    dest: max_reg,
+                    src: end,
+                });
+
+                (index_reg, max_reg)
+            }
+            _ => {
+                let val = self.lower_expr(iter);
+                let index_reg = self.new_reg();
+                self.emit(TacInst::Mov {
+                    dest: index_reg,
+                    src: Operand::Imm(0),
+                });
+                let max_reg = self.new_reg();
+                self.emit(TacInst::Mov {
+                    dest: max_reg,
+                    src: val,
+                });
+                (index_reg, max_reg)
+            }
+        };
 
         self.emit(TacInst::Label(loop_label.clone()));
 
         let cond_reg = self.new_reg();
-        let max_reg = self.new_reg();
-        self.emit(TacInst::Mov {
-            dest: max_reg,
-            src: Operand::Imm(10),
-        });
         self.emit(TacInst::CmpGe {
             dest: cond_reg,
-            lhs: Operand::Reg(index_reg),
-            rhs: Operand::Reg(max_reg),
+            lhs: Operand::Reg(start_val.0),
+            rhs: Operand::Reg(start_val.1),
         });
         self.emit(TacInst::JmpIf {
             cond: Operand::Reg(cond_reg),
@@ -373,7 +485,7 @@ impl Lower {
         self.vars.insert(var.to_string(), var_reg);
         self.emit(TacInst::Mov {
             dest: var_reg,
-            src: Operand::Reg(index_reg),
+            src: Operand::Reg(start_val.0),
         });
 
         self.lower_block(body);
@@ -384,8 +496,8 @@ impl Lower {
             src: Operand::Imm(1),
         });
         self.emit(TacInst::Add {
-            dest: index_reg,
-            lhs: Operand::Reg(index_reg),
+            dest: start_val.0,
+            lhs: Operand::Reg(start_val.0),
             rhs: Operand::Reg(one_reg),
         });
         self.emit(TacInst::Jmp(loop_label));
@@ -529,12 +641,25 @@ impl Lower {
     }
 
     fn lower_call(&mut self, callee: &Expr, args: &[Expr]) -> Operand {
-        let name = match callee {
-            Expr::Ident(s) => s.clone(),
+        let (name, this_arg) = match callee {
+            Expr::Ident(s) => (s.clone(), None),
+            Expr::Access { obj, field } => {
+                if let Expr::Ident(class_name) = obj.as_ref() {
+                    let method_name = format!("{}__{}", class_name, field);
+                    (method_name, Some(self.lower_expr(obj)))
+                } else {
+                    let method_name = format!("__{}", field);
+                    let obj_val = self.lower_expr(obj);
+                    (method_name, Some(obj_val))
+                }
+            }
             _ => return Operand::Imm(0),
         };
 
         let mut arg_ops = Vec::new();
+        if let Some(this) = this_arg {
+            arg_ops.push(this);
+        }
         for arg in args {
             arg_ops.push(self.lower_expr(arg));
         }
