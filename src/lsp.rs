@@ -150,13 +150,47 @@ fn check_document(text: &str) -> DiagnosticBag {
     match SemanticAnalyzer::analyze(&program, &mut diagnostics) {
         Err(errors) => {
             for e in errors {
-                diagnostics.error(e, crate::error::Span::new(1, 1));
+                let span = find_error_span(text, &e);
+                diagnostics.push(crate::error::Severity::Error, e, span);
             }
         }
         Ok(_) => {}
     }
 
     diagnostics
+}
+
+fn find_error_span(source: &str, msg: &str) -> crate::error::Span {
+    // Extract variable/type name from error messages like:
+    // "type mismatch: cannot assign Base(String) to b: Base(I32)"
+    // "undefined variable: x"
+    // Look for identifier-like tokens after "to ", "variable: ", etc.
+    for pattern in &["to ", "variable: ", "function '", "of ", "for "] {
+        if let Some(pos) = msg.find(pattern) {
+            let after = &msg[pos + pattern.len()..];
+            let name: String = after.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            if !name.is_empty() {
+                return find_ident_span(source, &name);
+            }
+        }
+    }
+    // Fallback: search for any word-like token in the last part of the message
+    crate::error::Span::new(1, 1)
+}
+
+fn find_ident_span(source: &str, name: &str) -> crate::error::Span {
+    for (line_no, line) in source.lines().enumerate() {
+        if let Some(col) = line.find(name) {
+            // Verify it's a whole word (surrounded by non-alphanumeric chars)
+            let before_ok = col == 0 || !line.as_bytes()[col - 1].is_ascii_alphanumeric() && line.as_bytes()[col - 1] != b'_';
+            let after = col + name.len();
+            let after_ok = after >= line.len() || !line.as_bytes()[after].is_ascii_alphanumeric() && line.as_bytes()[after] != b'_';
+            if before_ok && after_ok {
+                return crate::error::Span::with_len(line_no + 1, col + 1, name.len());
+            }
+        }
+    }
+    crate::error::Span::new(1, 1)
 }
 
 fn send_diagnostics(uri: &str, diags: &DiagnosticBag) -> Option<String> {
