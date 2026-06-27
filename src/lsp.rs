@@ -179,18 +179,29 @@ fn find_error_span(source: &str, msg: &str) -> crate::error::Span {
 }
 
 fn find_ident_span(source: &str, name: &str) -> crate::error::Span {
+    // Collect all whole-word matches, return the last one
+    // (semantic errors usually blame the last assignment/usage)
+    let mut last: Option<(usize, usize)> = None;
     for (line_no, line) in source.lines().enumerate() {
-        if let Some(col) = line.find(name) {
-            // Verify it's a whole word (surrounded by non-alphanumeric chars)
-            let before_ok = col == 0 || !line.as_bytes()[col - 1].is_ascii_alphanumeric() && line.as_bytes()[col - 1] != b'_';
+        for (col, _) in line.match_indices(name) {
+            let before_ok = col == 0 || {
+                let b = line.as_bytes()[col - 1];
+                !b.is_ascii_alphanumeric() && b != b'_'
+            };
             let after = col + name.len();
-            let after_ok = after >= line.len() || !line.as_bytes()[after].is_ascii_alphanumeric() && line.as_bytes()[after] != b'_';
+            let after_ok = after >= line.len() || {
+                let b = line.as_bytes()[after];
+                !b.is_ascii_alphanumeric() && b != b'_'
+            };
             if before_ok && after_ok {
-                return crate::error::Span::with_len(line_no + 1, col + 1, name.len());
+                last = Some((line_no + 1, col + 1));
             }
         }
     }
-    crate::error::Span::new(1, 1)
+    match last {
+        Some((l, c)) => crate::error::Span::with_len(l, c, name.len()),
+        None => crate::error::Span::new(1, 1),
+    }
 }
 
 fn send_diagnostics(uri: &str, diags: &DiagnosticBag) -> Option<String> {
