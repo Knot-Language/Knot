@@ -9,6 +9,7 @@ pub struct SemanticAnalyzer {
     errors: Vec<(String, crate::error::Span)>,
     return_type: Option<Type>,
     diagnostics: DiagnosticBag,
+    class_members: std::collections::HashMap<String, Vec<ClassMember>>,
 }
 
 impl SemanticAnalyzer {
@@ -18,7 +19,13 @@ impl SemanticAnalyzer {
             errors: Vec::new(),
             return_type: None,
             diagnostics: DiagnosticBag::new(""),
+            class_members: std::collections::HashMap::new(),
         };
+        for stmt in program {
+            if let Stmt::ClassDef { name, members, .. } = stmt {
+                sa.class_members.insert(name.clone(), members.clone());
+            }
+        }
         for stmt in program {
             sa.analyze_stmt(stmt);
         }
@@ -92,14 +99,14 @@ impl SemanticAnalyzer {
                 None
             }
             Stmt::Break(_) | Stmt::Continue(_) => None,
-            Stmt::ClassDef { name, generics, members, .. } => {
+            Stmt::ClassDef { name, generics, members, mixins, .. } => {
                 if !generics.is_empty() {
                     self.diagnostics.warn(
                         format!("generics on class '{}' are parsed but not yet lowered", name),
                         crate::error::Span::new(1, 1),
                     );
                 }
-                self.analyze_class_def(name, members);
+                self.analyze_class_def(name, members, mixins);
                 None
             }
             Stmt::EnumDef { name, generics, .. } => {
@@ -263,13 +270,80 @@ impl SemanticAnalyzer {
         self.symbols.pop_scope();
     }
 
-    fn analyze_class_def(&mut self, name: &str, _members: &[ClassMember]) {
+    fn analyze_class_def(&mut self, name: &str, _members: &[ClassMember], mixins: &[(String, crate::error::Span)]) {
         self.symbols.declare(name.to_string(), None);
+        self.check_mixin_conflicts(name, mixins);
+    }
+
+    fn check_mixin_conflicts(&mut self, class_name: &str, mixins: &[(String, crate::error::Span)]) {
+        let own_members = self.class_members.get(class_name);
+        let own_names: Vec<String> = own_members
+            .map(|m| m.iter().filter_map(|m| member_name_for_conflict(m)).collect())
+            .unwrap_or_default();
+
+        let mut seen: std::collections::HashMap<String, (String, crate::error::Span)> =
+            std::collections::HashMap::new();
+
+        for (mixin_name, span) in mixins {
+            if let Some(source_members) = self.class_members.get(mixin_name) {
+                for m in source_members {
+                    if let Some(mn) = member_name_for_conflict(m) {
+                        // Check if two mixins provide the same method and target class doesn't override
+                        if let Some((prev_mixin, _)) = seen.get(&mn) {
+                            if !own_names.contains(&mn) {
+                                self.diagnostics.error(
+                                    format!(
+                                        "mixin conflict: both '{}' and '{}' provide '{}' — class '{}' must explicitly override it",
+                                        prev_mixin, mixin_name, mn, class_name
+                                    ),
+                                    *span,
+                                );
+                            }
+                        } else {
+                            seen.insert(mn.clone(), (mixin_name.clone(), *span));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Warn about mixins that override target class members (informational)
+        for (mixin_name, span) in mixins {
+            if let Some(source_members) = self.class_members.get(mixin_name) {
+                for m in source_members {
+                    if let Some(mn) = member_name_for_conflict(m) {
+                        if own_names.contains(&mn) {
+                            self.diagnostics.warn(
+                                format!(
+                                    "mixin '{}' provides '{}' but class '{}' already defines it — target class wins",
+                                    mixin_name, mn, class_name
+                                ),
+                                *span,
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ── Expressions (delegated to check.rs) ──────────────
 
     fn analyze_expr(&mut self, expr: &Expr) -> Option<Type> {
         check::analyze_expr(expr, &mut self.symbols, &mut self.errors)
+    }
+}
+
+fn member_name_for_conflict(member: &ClassMember) -> Option<String> {
+    match member {
+        ClassMember::Field { name, .. } => Some(name.clone()),
+        ClassMember::Method { name, .. } => Some(name.clone()),
+        ClassMember::StaticMethod { name, .. } => Some(format!("static_{}", name)),
+        ClassMember::Operator { op, .. } => Some(format!("op_{}", op)),
+        ClassMember::Wrap { name, .. } => Some(format!("wrap_{}", name)),
+        ClassMember::New { .. } => Some("new".to_string()),
+        ClassMember::Delete { .. } => Some("delete".to_string()),
+        ClassMember::AbstractMethod { name, .. } => Some(name.clone()),
+        ClassMember::Mixin(_) => None,
     }
 }

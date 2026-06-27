@@ -511,7 +511,7 @@ impl Parser {
         }
     }
 
-    fn parse_class_body(&mut self) -> (Vec<ClassMember>, Vec<String>) {
+    fn parse_class_body(&mut self) -> (Vec<ClassMember>, Vec<(String, Span)>) {
         self.expect_operator("{");
         let mut members = Vec::new();
         let mut mixins = Vec::new();
@@ -519,8 +519,9 @@ impl Parser {
         while !self.at_end() && !self.is_op("}") {
             if !self.is_newline() {
                 if self.is_kw("mixin") {
+                    let span = self.current_span();
                     self.advance();
-                    mixins.push(self.parse_ident());
+                    mixins.push((self.parse_ident(), span));
                 } else {
                     members.push(self.parse_class_member());
                 }

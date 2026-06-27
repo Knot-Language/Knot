@@ -199,8 +199,9 @@ impl Lower {
                 }
             }
             Stmt::ClassDef { name, mixins, abstract_class, members, .. } => {
-                let resolved = self.resolve_mixins(name, mixins, members);
-                let mut class = ClassIr { name: name.clone(), generics: vec![], mixins: mixins.clone(), abstract_class: *abstract_class, fields: Vec::new() };
+                let mixin_names: Vec<String> = mixins.iter().map(|(n, _)| n.clone()).collect();
+                let resolved = self.resolve_mixins(name, &mixin_names, members);
+                let mut class = ClassIr { name: name.clone(), generics: vec![], mixins: mixin_names, abstract_class: *abstract_class, fields: Vec::new() };
                 let prev_class = self.current_class.clone();
                 self.current_class = Some(name.clone());
 

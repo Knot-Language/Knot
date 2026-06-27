@@ -32,7 +32,7 @@ pub enum Stmt {
         name: String,
         abstract_class: bool,
         generics: Vec<String>,
-        mixins: Vec<String>,
+        mixins: Vec<(String, Span)>,
         members: Vec<ClassMember>,
     },
     EnumDef {
