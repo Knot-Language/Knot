@@ -253,6 +253,7 @@ pub enum Type {
     Nullable(Box<Type>),
     Named(String),
     Array(Box<Type>),
+    Map(Box<Type>, Box<Type>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -271,4 +272,5 @@ pub enum BaseType {
     Bool,
     Null,
     Void,
+    Any,
 }

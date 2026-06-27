@@ -50,6 +50,8 @@ pub enum TacInst {
     LoadStrConst { dest: Reg, name: String },
     IntToFloat { dest: Reg, src: Operand },
     FloatToInt { dest: Reg, src: Operand },
+    AllocArray { dest: Reg, count: Operand },
+    GetElemPtr { dest: Reg, obj: Reg, index: Operand },
 }
 
 #[derive(Debug, Clone)]

@@ -7,7 +7,7 @@ pub fn analyze_expr(
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
 ) -> Option<Type> {
-    let span = expr_span(expr);
+    let _span = expr_span(expr);
     match expr {
         Expr::Int(..) => Some(Type::Base(BaseType::I32)),
         Expr::Float(..) => Some(Type::Base(BaseType::F64)),
@@ -28,8 +28,17 @@ pub fn analyze_expr(
         Expr::Access { obj, field, span: s } => check_access(obj, field, symbols, errors, *s),
         Expr::Assign { target, value, span: s } => check_assign(target, value, symbols, errors, *s),
         Expr::IfExpr { cond, then_block, else_block, span: s } => check_if_expr(cond, then_block, else_block, symbols, errors, *s),
-        Expr::Array(..) | Expr::Dict(..) | Expr::Cast { .. } | Expr::Lambda { .. } | Expr::MatchExpr { .. }
-        |         Expr::PostfixOp { .. } => None,
+        Expr::Array(elems, _s) => check_array(elems, symbols, errors),
+        Expr::Dict(entries, _s) => check_dict(entries, symbols, errors),
+        Expr::Cast { expr: e, ty, forced: _, span: _s } => {
+            analyze_expr(e, symbols, errors);
+            Some(ty.clone())
+        }
+        Expr::Lambda { params, body, span: _s } => check_lambda(params, body, symbols, errors),
+        Expr::MatchExpr { expr: e, branches, span: _s } => check_match_expr(e, branches, symbols, errors),
+        Expr::PostfixOp { op: _, target, span: _s } => {
+            analyze_expr(target, symbols, errors)
+        }
     }
 }
 
@@ -63,7 +72,7 @@ fn check_binary(
     right: &Expr,
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
-    span: Span,
+    _span: Span,
 ) -> Option<Type> {
     let lt = analyze_expr(left, symbols, errors);
     let rt = analyze_expr(right, symbols, errors);
@@ -187,25 +196,43 @@ fn check_index(
     errors: &mut Vec<(String, Span)>,
     _span: Span,
 ) -> Option<Type> {
-    let _obj_ty = analyze_expr(obj, symbols, errors);
+    let obj_ty = analyze_expr(obj, symbols, errors);
     let idx_ty = analyze_expr(index, symbols, errors);
     if let Some(ref t) = idx_ty {
-        if !matches!(t, Type::Base(BaseType::I32)) {
-            errors.push((format!("index must be I32, got {:?}", t), expr_span(index)));
+        if !is_integer(t) && !matches!(t, Type::Base(BaseType::Any)) {
+            errors.push((format!("index must be integer, got {:?}", t), expr_span(index)));
         }
     }
-    Some(Type::Base(BaseType::I32))
+    match &obj_ty {
+        Some(Type::Array(elem_ty)) => Some(*elem_ty.clone()),
+        Some(Type::Map(_kty, vty)) => Some(*vty.clone()),
+        _ => Some(Type::Base(BaseType::I32)),
+    }
 }
 
 fn check_access(
     obj: &Expr,
-    _field: &str,
+    field: &str,
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
     _span: Span,
 ) -> Option<Type> {
-    let _obj_ty = analyze_expr(obj, symbols, errors);
-    Some(Type::Base(BaseType::Void))
+    analyze_expr(obj, symbols, errors);
+    match obj {
+        Expr::Ident(class_name, _) => {
+            let member_key = format!("{}__{}", class_name, field);
+            symbols.lookup(&member_key).and_then(|info| info.ty.clone())
+        }
+        Expr::Access { obj: inner, field: inner_field, .. } => {
+            if let Expr::Ident(class_name, _) = inner.as_ref() {
+                let member_key = format!("{}__{}__{}", class_name, inner_field, field);
+                symbols.lookup(&member_key).and_then(|info| info.ty.clone())
+            } else {
+                Some(Type::Base(BaseType::Void))
+            }
+        }
+        _ => Some(Type::Base(BaseType::Void)),
+    }
 }
 
 fn check_assign(
@@ -304,6 +331,85 @@ fn analyze_expr_stmt(
     }
 }
 
+// ── Array / Dict / Lambda / MatchExpr ─────────────────
+
+fn check_array(
+    elems: &[Expr],
+    symbols: &mut SymbolTable,
+    errors: &mut Vec<(String, Span)>,
+) -> Option<Type> {
+    let mut elem_ty = None;
+    for e in elems {
+        let ty = analyze_expr(e, symbols, errors);
+        if elem_ty.is_none() {
+            elem_ty = ty;
+        }
+    }
+    Some(Type::Array(Box::new(elem_ty.unwrap_or(Type::Base(BaseType::Void)))))
+}
+
+fn check_dict(
+    entries: &[(Expr, Expr)],
+    symbols: &mut SymbolTable,
+    errors: &mut Vec<(String, Span)>,
+) -> Option<Type> {
+    let mut key_ty = None;
+    let mut val_ty = None;
+    for (k, v) in entries {
+        let kt = analyze_expr(k, symbols, errors);
+        let vt = analyze_expr(v, symbols, errors);
+        if key_ty.is_none() { key_ty = kt; }
+        if val_ty.is_none() { val_ty = vt; }
+    }
+    Some(Type::Map(
+        Box::new(key_ty.unwrap_or(Type::Base(BaseType::Void))),
+        Box::new(val_ty.unwrap_or(Type::Base(BaseType::Void))),
+    ))
+}
+
+fn check_lambda(
+    params: &[Param],
+    body: &Block,
+    symbols: &mut SymbolTable,
+    errors: &mut Vec<(String, Span)>,
+) -> Option<Type> {
+    symbols.push_scope();
+    for p in params {
+        let ty = p.ty.clone().unwrap_or(Type::Base(BaseType::Void));
+        symbols.declare(p.name.clone(), Some(ty));
+    }
+    let _body_ty = {
+        let mut last = None;
+        for stmt in &body.stmts {
+            last = analyze_expr_stmt(stmt, symbols, errors);
+        }
+        last
+    };
+    symbols.pop_scope();
+    Some(Type::Named("__lambda".to_string()))
+}
+
+fn check_match_expr(
+    expr: &Expr,
+    branches: &[MatchBranch],
+    symbols: &mut SymbolTable,
+    errors: &mut Vec<(String, Span)>,
+) -> Option<Type> {
+    analyze_expr(expr, symbols, errors);
+    let mut result_ty = None;
+    for branch in branches {
+        symbols.push_scope();
+        analyze_expr(&branch.pattern, symbols, errors);
+        let mut last = None;
+        for stmt in &branch.body.stmts {
+            last = analyze_expr_stmt(stmt, symbols, errors);
+        }
+        symbols.pop_scope();
+        if result_ty.is_none() { result_ty = last; }
+    }
+    result_ty
+}
+
 // ── Type Helpers ───────────────────────────────────────
 
 fn is_integer(ty: &Type) -> bool {
@@ -340,6 +446,9 @@ pub fn types_compatible(expected: &Type, actual: &Type) -> bool {
     if expected == actual {
         return true;
     }
+    if matches!(expected, Type::Base(BaseType::Any)) || matches!(actual, Type::Base(BaseType::Any)) {
+        return true;
+    }
     if is_numeric(expected) && is_numeric(actual) {
         return true;
     }
@@ -352,6 +461,9 @@ pub fn types_compatible(expected: &Type, actual: &Type) -> bool {
 fn wider_type(a: &Type, b: &Type) -> Type {
     if a == b {
         return a.clone();
+    }
+    if matches!(a, Type::Base(BaseType::Any)) || matches!(b, Type::Base(BaseType::Any)) {
+        return Type::Base(BaseType::Any);
     }
     match (a, b) {
         (Type::Base(BaseType::F64), _) | (_, Type::Base(BaseType::F64)) => Type::Base(BaseType::F64),

@@ -337,11 +337,9 @@ result = double(5)       // 10
 ## 8. Generics
 
 Generics allow functions, classes, and enums to accept type parameters,
-enabling parametric polymorphism.
-
-> Note: generics are fully parsed by the compiler but monomorphization is
-> not yet implemented by the backend. Defining generic parameters will
-> emit a compiler warning.
+enabling parametric polymorphism. Type arguments are automatically inferred
+at call sites, and the compiler generates monomorphized copies for each
+concrete type instantiation.
 
 ### Generic Functions
 
@@ -766,8 +764,8 @@ try {
 ```
 
 `throw` stores the exception value in a global register and jumps to the
-nearest catch handler. Single-level try/catch only; nesting is not yet
-supported.
+nearest catch handler. Nested try/catch blocks are supported — each
+`try` saves and restores its own handler label.
 
 ---
 
@@ -801,14 +799,45 @@ x = maybe ?? 0
 
 ## 14. Module Imports
 
-### import
+`import` loads and inlines the contents of another Knot source file at compile time.
 
-`import` loads other files. Supports string paths and module paths:
+### Syntax
+
+```
+import <path> [as <alias>]
+```
+
+### Path Forms
+
+Two path forms are accepted:
+
+| Form | Example | Notes |
+|------|---------|-------|
+| **String literal** | `import "utils.knot"` | File path, relative to the importing file. Subject to canonicalization. |
+| **Bare identifier** | `import math` | Module name, resolved via the module search path. |
+
+### Alias (`as`)
+
+When an alias is provided, all top-level definitions from the imported file are accessible
+under the `<alias>.` namespace. Without an alias, imported symbols are merged directly into
+the current scope — they can be used as if they were defined in the importing file.
 
 ```knot
 import "std/io.knot" as io
 import "utils.knot"
 ```
+
+### Path Resolution
+
+Imports are resolved at **compile time** (no runtime loading):
+
+1. The path is checked for `..` — **path traversal is blocked** for security.
+2. The path is canonicalized (resolves `.` and symlinks).
+3. The target file is read, parsed, and its top-level statements are lowered immediately,
+   inlined into the current compilation unit.
+4. If the file cannot be read, a **warning** is emitted (non-fatal), and compilation continues.
+
+Imported files may themselves contain `import` statements, forming a dependency graph.
 
 ### Project Configuration
 
@@ -847,6 +876,7 @@ func main() -> I32 {
 | String | `String` | Immutable UTF-8 |
 | Boolean | `Bool` | `true` / `false` |
 | Null | `Null` | Sole value `null` |
+| Dynamic | `Any` | Dynamically typed value |
 | Void | `Void` | No return value |
 
 ### Compound Types
