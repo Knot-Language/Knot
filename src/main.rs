@@ -22,6 +22,7 @@ enum Command {
         #[arg(short = 'o', long = "output")]
         output: Option<String>,
     },
+    Lsp,
 }
 
 fn main() {
@@ -34,6 +35,9 @@ fn main() {
         }
         Command::Run { source, output } => {
             cmd_build_or_run(source, output, true);
+        }
+        Command::Lsp => {
+            knot::lsp::run_lsp();
         }
     }
 }
