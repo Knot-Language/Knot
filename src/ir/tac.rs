@@ -47,6 +47,7 @@ pub enum TacInst {
     Store { addr: Reg, src: Operand },
     Throw { value: Operand, catch_label: Label },
     CatchEntry(Reg),
+    LoadStrConst { dest: Reg, name: String },
 }
 
 #[derive(Debug, Clone)]
@@ -98,4 +99,5 @@ pub struct TacProgram {
     pub functions: Vec<Function>,
     pub classes: Vec<ClassIr>,
     pub enums: Vec<EnumIr>,
+    pub strings: Vec<(String, String)>,
 }

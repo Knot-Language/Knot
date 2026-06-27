@@ -8,7 +8,13 @@ impl LlvmBackend {
         let mut out = String::new();
         out.push_str("declare i32 @puts(i8*)\n");
         out.push_str("declare i32 @printf(i8*, ...)\n");
-        out.push_str("@knot_exception = global i32 0\n\n");
+        out.push_str("@knot_exception = global i32 0\n");
+
+        for (name, val) in &program.strings {
+            let len = val.len() + 1;
+            out.push_str(&format!("{} = private unnamed_addr constant [{} x i8] c\"{}\\00\"\n", name, len, val));
+        }
+        out.push('\n');
 
         for class in &program.classes {
             emit_struct_type(&mut out, class);
@@ -326,6 +332,16 @@ fn emit_insts(
                 out.push_str(&format!("  br label %{}\n", catch_label));
                 pos += 1;
                 return pos;
+            }
+
+            TacInst::LoadStrConst { dest, name } => {
+                let len = ctx.program
+                    .and_then(|p| p.strings.iter().find(|(n, _)| n == name))
+                    .map(|(_, v)| v.len() + 1)
+                    .unwrap_or(1);
+                out.push_str(&format!("  %r{} = getelementptr inbounds [{} x i8], ptr {}, i32 0, i32 0\n", dest, len, name));
+                ctx.set(*dest, "ptr");
+                pos += 1;
             }
 
             TacInst::Call { dest, name, args } => {
