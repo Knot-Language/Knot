@@ -4,6 +4,8 @@ use crate::lexer::token::Token;
 pub struct Lexer {
     chars: Vec<char>,
     pos: usize,
+    line: usize,
+    col: usize,
 }
 
 const VALID_SUFFIXES: &[&str] = &[
@@ -15,7 +17,13 @@ impl Lexer {
         Lexer {
             chars: source.chars().collect(),
             pos: 0,
+            line: 1,
+            col: 1,
         }
+    }
+
+    pub fn position(&self) -> (usize, usize) {
+        (self.line, self.col)
     }
 
     fn peek(&self) -> Option<char> {
@@ -28,8 +36,14 @@ impl Lexer {
 
     fn advance(&mut self) -> Option<char> {
         let c = self.peek();
-        if c.is_some() {
+        if let Some(ch) = c {
             self.pos += 1;
+            if ch == '\n' {
+                self.line += 1;
+                self.col = 1;
+            } else {
+                self.col += 1;
+            }
         }
         c
     }
@@ -248,7 +262,7 @@ impl Lexer {
             "continue", "else", "enum", "false", "for", "func", "if", "import",
             "in", "kwargs", "match", "mixin", "mut", "null", "operator", "private",
             "return", "static", "throw", "true", "try", "while", "wrap",
-            "new", "delete",
+            "new", "delete", "Any",
         ];
 
         if keywords.contains(&s.as_str()) {
@@ -278,10 +292,6 @@ impl Lexer {
                     Some(ch) => { self.advance(); s.push(ch); }
                     None => break,
                 }
-            } else if c == '{' {
-                // String interpolation: "text {expr} more"
-                // For now, treat { as literal; full interpolation requires parser support
-                s.push(self.advance().unwrap());
             } else {
                 s.push(self.advance().unwrap());
             }
@@ -290,11 +300,11 @@ impl Lexer {
     }
 
     fn read_raw_string(&mut self, quote: char) -> Token {
-        self.advance(); // consume opening quote
+        self.advance();
         let mut s = String::new();
         while let Some(c) = self.peek() {
             if c == quote {
-                self.advance(); // consume closing quote
+                self.advance();
                 return Token::String(s);
             }
             s.push(self.advance().unwrap());
@@ -434,12 +444,14 @@ impl Lexer {
         Token::Operator(op.to_string())
     }
 
-    pub fn next(&mut self) -> Token {
+    pub fn next(&mut self) -> (Token, (usize, usize)) {
         if let Some(err) = self.skip_whitespace() {
-            return err;
+            let pos = self.position();
+            return (err, pos);
         }
 
-        match self.peek() {
+        let pos = self.position();
+        let token = match self.peek() {
             None => Token::Eof,
             Some('\n') => {
                 self.advance();
@@ -451,22 +463,25 @@ impl Lexer {
             Some('\'') => self.read_raw_string('\''),
             Some('`') => self.read_raw_string('`'),
             Some(_) => self.read_operator(),
-        }
+        };
+        (token, pos)
     }
 }
 
-pub fn tokenize(source: &str) -> Vec<Token> {
+pub fn tokenize(source: &str) -> (Vec<Token>, Vec<(usize, usize)>) {
     let mut lexer = Lexer::new(source);
     let mut tokens = Vec::new();
+    let mut positions = Vec::new();
     loop {
-        let t = lexer.next();
+        let (t, pos) = lexer.next();
         let done = matches!(t, Token::Eof);
         tokens.push(t);
+        positions.push(pos);
         if done {
             break;
         }
     }
-    tokens
+    (tokens, positions)
 }
 
 fn is_digit(c: char, radix: u32) -> bool {

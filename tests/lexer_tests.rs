@@ -3,7 +3,7 @@ use knot::lexer::num::Num;
 use knot::lexer::token::Token;
 
 fn assert_tokens(source: &str, expected: Vec<Token>) {
-    let tokens = tokenize(source);
+    let (tokens, _) = tokenize(source);
     assert_eq!(
         tokens, expected,
         "\nsource: {:?}\nexpected: {:?}\nactual:   {:?}",
@@ -173,19 +173,19 @@ fn newlines_as_statement_separators() {
 
 #[test]
 fn invalid_character() {
-    let tokens = tokenize("$");
+    let (tokens, _) = tokenize("$");
     assert!(matches!(tokens[0], Token::Error(_)));
 }
 
 #[test]
 fn unterminated_string() {
-    let tokens = tokenize("\"unclosed");
+    let (tokens, _) = tokenize("\"unclosed");
     assert!(matches!(tokens[0], Token::Error(_)));
 }
 
 #[test]
 fn unterminated_block_comment() {
-    let tokens = tokenize("/* unclosed block comment");
+    let (tokens, _) = tokenize("/* unclosed block comment");
     assert!(matches!(tokens[0], Token::Error(_)));
 }
 

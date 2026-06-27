@@ -45,6 +45,8 @@ pub enum TacInst {
     GetFieldPtr { dest: Reg, obj: Reg, class: String, field: String },
     Load { dest: Reg, addr: Reg },
     Store { addr: Reg, src: Operand },
+    Throw { value: Operand, catch_label: Label },
+    CatchEntry(Reg),
 }
 
 #[derive(Debug, Clone)]

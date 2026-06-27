@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod symbol;
 
+use crate::error::{DiagnosticBag, Span};
 use crate::lexer::lexer::tokenize;
 use crate::lexer::token::Token;
 use crate::parser::ast::*;
@@ -8,32 +9,51 @@ use crate::parser::symbol::SymbolTable;
 
 pub struct Parser {
     tokens: Vec<Token>,
+    positions: Vec<(usize, usize)>,
     pos: usize,
     pub symbols: SymbolTable,
-    pub warnings: Vec<String>,
+    pub diagnostics: DiagnosticBag,
 }
 
 impl Parser {
     pub fn new(source: &str) -> Self {
-        let tokens = tokenize(source);
+        let (tokens, positions) = tokenize(source);
         Parser {
             tokens,
+            positions,
             pos: 0,
             symbols: SymbolTable::new(),
-            warnings: Vec::new(),
+            diagnostics: DiagnosticBag::new(source),
         }
     }
 
+    fn current_span(&self) -> Span {
+        let (line, col) = self.positions.get(self.pos).copied().unwrap_or((1, 1));
+        Span::new(line, col)
+    }
+
+    fn error(&mut self, msg: String) {
+        self.diagnostics.error(msg, self.current_span());
+    }
+
     fn warn(&mut self, msg: String) {
-        self.warnings.push(msg);
+        self.diagnostics.warn(msg, self.current_span());
+    }
+
+    fn err_expected(&mut self, expected: &str, got: &Token) {
+        self.error(format!(
+            "expected {}, got {}",
+            expected,
+            token_desc(got)
+        ));
     }
 
     fn peek(&self) -> &Token {
         &self.tokens[self.pos]
     }
 
-    fn advance(&mut self) -> &Token {
-        let t = &self.tokens[self.pos];
+    fn advance(&mut self) -> Token {
+        let t = self.tokens[self.pos].clone();
         self.pos += 1;
         t
     }
@@ -68,24 +88,58 @@ impl Parser {
         if self.at_end() || self.is_op("}") {
             return;
         }
-        panic!("Expected newline, got {:?}", self.peek());
+        let tok = self.peek().clone();
+        self.err_expected("newline or end of block", &tok);
+        self.sync_to_stmt_end();
     }
 
     fn expect_operator(&mut self, op: &str) {
-        match self.advance() {
-            Token::Operator(s) if s == op => {}
-            t => panic!("Expected '{}', got {:?}", op, t),
+        let tok = self.peek().clone();
+        match &tok {
+            Token::Operator(s) if s == op => {
+                self.advance();
+            }
+            _ => {
+                self.err_expected(&format!("'{}'", op), &tok);
+            }
         }
     }
 
     fn expect_keyword(&mut self, kw: &str) {
-        match self.advance() {
-            Token::Keyword(s) if s == kw => {}
-            t => panic!("Expected keyword '{}', got {:?}", kw, t),
+        let tok = self.peek().clone();
+        match &tok {
+            Token::Keyword(s) if s == kw => {
+                self.advance();
+            }
+            _ => {
+                self.err_expected(&format!("'{}'", kw), &tok);
+            }
         }
     }
 
-    // ── Program ──────────────────────────────────────────
+    fn sync_to_stmt_end(&mut self) {
+        while !self.at_end() && !self.is_newline() && !self.is_op("}") {
+            self.advance();
+        }
+    }
+
+    #[allow(dead_code)]
+    fn sync_to_block_end(&mut self) {
+        let mut depth = 0;
+        while !self.at_end() {
+            if self.is_op("{") {
+                depth += 1;
+            } else if self.is_op("}") {
+                if depth == 0 {
+                    return;
+                }
+                depth -= 1;
+            }
+            self.advance();
+        }
+    }
+
+    // 鈹€鈹€ Program 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     pub fn parse_program(&mut self) -> Vec<Stmt> {
         let mut stmts = Vec::new();
@@ -110,12 +164,17 @@ impl Parser {
             self.parse_import()
         } else if self.is_kw("wrap") {
             self.parse_top_level_wrap()
+        } else if self.is_kw("try") {
+            Stmt::TryCatch {
+                try_block: Block { stmts: vec![] },
+                catches: vec![],
+            }
         } else {
             self.parse_stmt()
         }
     }
 
-    // ── Statements ────────────────────────────────────────
+    // 鈹€鈹€ Statements 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn parse_stmt(&mut self) -> Stmt {
         if self.is_kw("return") {
@@ -169,7 +228,7 @@ impl Parser {
     }
 
     fn parse_match(&mut self) -> Stmt {
-        self.advance(); // "match"
+        self.advance();
         let expr = self.parse_expr();
         let branches = self.parse_match_body();
         Stmt::Match { expr, branches }
@@ -200,7 +259,7 @@ impl Parser {
         let body = if self.is_op("{") {
             match self.parse_block() {
                 Stmt::Block(b) => b,
-                _ => unreachable!(),
+                _ => Block { stmts: vec![] },
             }
         } else {
             let e = self.parse_expr();
@@ -211,50 +270,67 @@ impl Parser {
     }
 
     fn parse_throw(&mut self) -> Stmt {
-        self.advance(); // "throw"
+        self.advance();
         let expr = self.parse_expr();
         self.expect_newline_or_end();
         Stmt::Throw(expr)
     }
 
     fn parse_try_catch(&mut self) -> Stmt {
-        self.advance(); // "try"
+        self.advance();
         let try_block = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block after try"),
+            _ => {
+                self.error("expected block after 'try'".to_string());
+                Block { stmts: vec![] }
+            }
         };
         let mut catches = Vec::new();
         while self.is_kw("catch") {
-            self.advance(); // "catch"
+            self.advance();
             let var = if matches!(self.peek(), Token::Identifier(_)) {
                 let v = self.parse_ident();
                 if self.is_op(":") {
-                    self.advance(); // ":"
-                    let _ty = self.parse_type();
-                    Some(v)
+                    self.advance();
+                    let ty = self.parse_type();
+                    Some((v, Some(ty)))
                 } else {
-                    Some(v)
+                    Some((v, None))
                 }
             } else {
                 None
             };
             let body = match self.parse_block() {
                 Stmt::Block(b) => b,
-                _ => panic!("Expected block after catch"),
+                _ => {
+                    self.error("expected block after 'catch'".to_string());
+                    Block { stmts: vec![] }
+                }
             };
-            catches.push(CatchClause { var, ty: None, body });
+            if let Some((v, ty)) = var {
+                catches.push(CatchClause {
+                    var: Some(v),
+                    ty,
+                    body,
+                });
+            } else {
+                catches.push(CatchClause { var: None, ty: None, body });
+            }
         }
         Stmt::TryCatch { try_block, catches }
     }
 
     fn parse_assert(&mut self) -> Stmt {
-        self.advance(); // "assert"
+        self.advance();
         let expr = self.parse_expr();
         let message = if self.is_op(",") {
             self.advance();
             match self.advance() {
                 Token::String(s) => Some(s.clone()),
-                t => panic!("Expected string message after assert, got {:?}", t),
+                t => {
+                    self.err_expected("string message", &t);
+                    None
+                }
             }
         } else {
             None
@@ -302,7 +378,10 @@ impl Parser {
         let cond = self.parse_expr();
         let then_block = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block after if condition"),
+            _ => {
+                self.error("expected block after if condition".to_string());
+                Block { stmts: vec![] }
+            }
         };
 
         let else_block = if self.is_kw("else") {
@@ -313,7 +392,10 @@ impl Parser {
             } else {
                 match self.parse_block() {
                     Stmt::Block(b) => Some(Box::new(Stmt::Block(b))),
-                    _ => panic!("Expected block after else"),
+                    _ => {
+                        self.error("expected block after else".to_string());
+                        None
+                    }
                 }
             }
         } else {
@@ -332,7 +414,10 @@ impl Parser {
         let cond = self.parse_expr();
         let body = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block after while condition"),
+            _ => {
+                self.error("expected block after while condition".to_string());
+                Block { stmts: vec![] }
+            }
         };
         Stmt::While { cond, body }
     }
@@ -341,18 +426,24 @@ impl Parser {
         self.advance();
         let var = match self.advance() {
             Token::Identifier(s) => s.clone(),
-            t => panic!("Expected identifier after 'for', got {:?}", t),
+            t => {
+                self.err_expected("identifier after 'for'", &t);
+                "_".to_string()
+            }
         };
         self.expect_keyword("in");
         let iter = self.parse_expr();
         let body = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block after for"),
+            _ => {
+                self.error("expected block after for".to_string());
+                Block { stmts: vec![] }
+            }
         };
         Stmt::For { var, iter, body }
     }
 
-    // ── Class Definition ──────────────────────────────────
+    // 鈹€鈹€ Class Definition 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn parse_class_def(&mut self) -> Stmt {
         let is_abstract = if self.is_kw("abstract") {
@@ -444,7 +535,15 @@ impl Parser {
                     self.parse_method(is_private, true)
                 }
             } else {
-                panic!("Expected 'func' after 'static', got {:?}", self.peek());
+                let tok = self.peek().clone();
+                self.err_expected("'func' after 'static'", &tok);
+                self.sync_to_stmt_end();
+                ClassMember::Field {
+                    private: false,
+                    name: "_".to_string(),
+                    ty: None,
+                    default: None,
+                }
             }
         } else if self.is_kw("operator") {
             self.parse_operator_def(is_private)
@@ -464,13 +563,16 @@ impl Parser {
         }
         let body = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block for constructor body"),
+            _ => {
+                self.error("expected block for constructor body".to_string());
+                Block { stmts: vec![] }
+            }
         };
         ClassMember::New { private, params, body }
     }
 
     fn parse_destructor(&mut self, private: bool) -> ClassMember {
-        let _ = self.parse_params(); // should be empty ()
+        let _ = self.parse_params();
         if self.is_op("->") {
             self.warn("destructor 'delete' cannot have return type".to_string());
             self.advance();
@@ -478,7 +580,10 @@ impl Parser {
         }
         let body = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block for destructor body"),
+            _ => {
+                self.error("expected block for destructor body".to_string());
+                Block { stmts: vec![] }
+            }
         };
         ClassMember::Delete { private, body }
     }
@@ -518,7 +623,10 @@ impl Parser {
         };
         let body = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block for method body"),
+            _ => {
+                self.error("expected block for method body".to_string());
+                Block { stmts: vec![] }
+            }
         };
         if is_static {
             ClassMember::StaticMethod {
@@ -542,14 +650,17 @@ impl Parser {
     }
 
     fn parse_operator_def(&mut self, _private: bool) -> ClassMember {
-        self.advance(); // "operator"
+        self.advance();
         let op = match self.advance() {
             Token::Operator(s) => s.clone(),
             Token::Keyword(s) if s == "as" => {
                 let ident = self.parse_ident();
                 format!("as {}", ident)
             }
-            t => panic!("Expected operator, got {:?}", t),
+            t => {
+                self.err_expected("operator symbol", &t);
+                "+".to_string()
+            }
         };
         let generics = self.parse_generic_params();
         let params = self.parse_params();
@@ -561,7 +672,10 @@ impl Parser {
         };
         let body = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block for operator body"),
+            _ => {
+                self.error("expected block for operator body".to_string());
+                Block { stmts: vec![] }
+            }
         };
         ClassMember::Operator {
             op,
@@ -573,8 +687,8 @@ impl Parser {
     }
 
     fn parse_wrap_annotation(&mut self) -> Stmt {
-        self.advance(); // "@"
-        let wrap_expr = self.parse_expr(); // may include (args)
+        self.advance();
+        let wrap_expr = self.parse_expr();
         let (callee_ident, mut extra_args) = match &wrap_expr {
             Expr::Call { callee, args } => (callee.clone(), args.clone()),
             other => (Box::new(other.clone()), vec![]),
@@ -603,36 +717,45 @@ impl Parser {
                     value: Box::new(Expr::Call { callee: callee_ident, args }),
                 })
             }
-            other => other,
+            _other => {
+                self.error("expected function or variable declaration after @wrap".to_string());
+                Stmt::Expr(Expr::Null)
+            }
         }
     }
 
     fn parse_wrap_def(&mut self) -> ClassMember {
-        self.advance(); // "wrap"
+        self.advance();
         let name = self.parse_ident();
         let params = self.parse_params();
         let body = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block for wrap body"),
+            _ => {
+                self.error("expected block for wrap body".to_string());
+                Block { stmts: vec![] }
+            }
         };
         ClassMember::Wrap { name, params, body }
     }
 
     fn parse_top_level_wrap(&mut self) -> Stmt {
-        self.advance(); // "wrap"
+        self.advance();
         let name = self.parse_ident();
         let params = self.parse_params();
         let body = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block for wrap body"),
+            _ => {
+                self.error("expected block for wrap body".to_string());
+                Block { stmts: vec![] }
+            }
         };
         Stmt::WrapDef { name, params, body }
     }
 
-    // ── Enum Definition ───────────────────────────────────
+    // 鈹€鈹€ Enum Definition 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn parse_enum_def(&mut self) -> Stmt {
-        self.advance(); // "enum"
+        self.advance();
         let name = self.parse_ident();
         let generics = self.parse_generic_params();
         self.expect_operator("{");
@@ -652,14 +775,17 @@ impl Parser {
         }
     }
 
-    // ── Import ────────────────────────────────────────────
+    // 鈹€鈹€ Import 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn parse_import(&mut self) -> Stmt {
-        self.advance(); // "import"
+        self.advance();
         let path = match self.advance() {
             Token::String(s) => s.clone(),
             Token::Identifier(s) => s.clone(),
-            t => panic!("Expected import path string, got {:?}", t),
+            t => {
+                self.err_expected("import path", &t);
+                "".to_string()
+            }
         };
         let alias = if self.is_kw("as") {
             self.advance();
@@ -671,12 +797,15 @@ impl Parser {
         Stmt::Import { path, alias }
     }
 
-    // ── Helpers ───────────────────────────────────────────
+    // 鈹€鈹€ Helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn parse_ident(&mut self) -> String {
         match self.advance() {
             Token::Identifier(s) => s.clone(),
-            t => panic!("Expected identifier, got {:?}", t),
+            t => {
+                self.err_expected("identifier", &t);
+                "_".to_string()
+            }
         }
     }
 
@@ -704,18 +833,22 @@ impl Parser {
         list
     }
 
-    // ── Function Definition ──────────────────────────────
+    // 鈹€鈹€ Function Definition 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn parse_func_def(&mut self) -> Stmt {
         self.advance();
         let name = match self.advance() {
             Token::Identifier(s) => s.clone(),
-            t => panic!("Expected function name, got {:?}", t),
+            t => {
+                self.err_expected("function name", &t);
+                "_".to_string()
+            }
         };
 
         self.symbols.declare(name.clone(), None, false);
         self.symbols.push_scope();
 
+        let generics = self.parse_generic_params();
         let params = self.parse_params();
 
         let ret_ty = if self.is_op("->") {
@@ -727,12 +860,16 @@ impl Parser {
 
         let body = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block for function body"),
+            _ => {
+                self.error("expected block for function body".to_string());
+                Block { stmts: vec![] }
+            }
         };
 
         self.symbols.pop_scope();
         Stmt::FuncDef {
             name,
+            generics,
             params,
             ret_ty,
             body,
@@ -752,16 +889,23 @@ impl Parser {
             let is_args = if self.is_kw("args") {
                 self.advance();
                 true
-            } else { false };
+            } else {
+                false
+            };
 
             let is_kwargs = if self.is_kw("kwargs") {
                 self.advance();
                 true
-            } else { false };
+            } else {
+                false
+            };
 
             let name = match self.advance() {
                 Token::Identifier(s) => s.clone(),
-                t => panic!("Expected parameter name, got {:?}", t),
+                t => {
+                    self.err_expected("parameter name", &t);
+                    "_".to_string()
+                }
             };
 
             let ty = if self.is_op(":") {
@@ -787,14 +931,15 @@ impl Parser {
                 self.advance();
                 break;
             } else {
-                panic!("Expected ',' or ')', got {:?}", self.peek());
+                self.err_expected("',' or ')'", &self.peek().clone());
+                break;
             }
         }
 
         params
     }
 
-    // ── Types ─────────────────────────────────────────────
+    // 鈹€鈹€ Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn parse_type(&mut self) -> Type {
         let ty = match self.advance() {
@@ -811,10 +956,15 @@ impl Parser {
                 "F64" => Type::Base(BaseType::F64),
                 "String" => Type::Base(BaseType::String),
                 "Bool" => Type::Base(BaseType::Bool),
+                "Null" => Type::Base(BaseType::Null),
                 "Void" => Type::Base(BaseType::Void),
+                "Any" => Type::Base(BaseType::Any),
                 _ => Type::Named(s.clone()),
             },
-            t => panic!("Expected type name, got {:?}", t),
+            t => {
+                self.err_expected("type name", &t);
+                Type::Base(BaseType::Void)
+            }
         };
 
         if self.is_op("?") {
@@ -825,7 +975,7 @@ impl Parser {
         }
     }
 
-    // ── Expressions (Pratt) ───────────────────────────────
+    // 鈹€鈹€ Expressions (Pratt) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn parse_expr(&mut self) -> Expr {
         self.parse_expr_bp(1)
@@ -860,7 +1010,10 @@ impl Parser {
                 self.advance();
                 let field = match self.advance() {
                     Token::Identifier(s) => s.clone(),
-                    t => panic!("Expected field name after '.', got {:?}", t),
+                    t => {
+                        self.err_expected("field name after '.'", &t);
+                        "_".to_string()
+                    }
                 };
                 left = Expr::Access {
                     obj: Box::new(left),
@@ -870,9 +1023,11 @@ impl Parser {
                 self.advance();
                 let field = match self.advance() {
                     Token::Identifier(s) => s.clone(),
-                    t => panic!("Expected field name after '::', got {:?}", t),
+                    t => {
+                        self.err_expected("field name after '::'", &t);
+                        "_".to_string()
+                    }
                 };
-                // Parse static method call: ClassName::method(args)
                 if self.is_op("(") {
                     self.advance();
                     let args = self.parse_args();
@@ -950,9 +1105,15 @@ impl Parser {
                 "^" => BinOp::BitXor,
                 ".." => BinOp::Range,
                 "??" => BinOp::NullCoalesce,
-                _ => panic!("Unknown binary operator: {}", s),
+                _ => {
+                    self.error(format!("unknown binary operator: {}", s));
+                    BinOp::Add
+                }
             },
-            t => panic!("Expected binary operator, got {:?}", t),
+            t => {
+                self.err_expected("binary operator", &t);
+                BinOp::Add
+            }
         }
     }
 
@@ -963,8 +1124,6 @@ impl Parser {
                 let expr = self.parse_expr_bp(90);
                 match expr {
                     Expr::Call { callee, mut args } => {
-                        // @func(x) → func(func, x)
-                        // @obj.m(x) → obj.m(obj, x)
                         match callee.as_ref() {
                             Expr::Access { obj, .. } => {
                                 args.insert(0, obj.as_ref().clone());
@@ -976,8 +1135,10 @@ impl Parser {
                         Expr::Call { callee, args }
                     }
                     other => {
-                        // @x → x(x)
-                        Expr::Call { callee: Box::new(other.clone()), args: vec![other] }
+                        Expr::Call {
+                            callee: Box::new(other.clone()),
+                            args: vec![other],
+                        }
                     }
                 }
             }
@@ -989,7 +1150,11 @@ impl Parser {
                     let one = Expr::Int(1);
                     Expr::Assign {
                         target: Box::new(target.clone()),
-                        value: Box::new(Expr::Binary { op, left: Box::new(target), right: Box::new(one) }),
+                        value: Box::new(Expr::Binary {
+                            op,
+                            left: Box::new(target),
+                            right: Box::new(one),
+                        }),
                     }
                 } else {
                     let op = match s.as_str() {
@@ -1025,15 +1190,15 @@ impl Parser {
                 self.advance();
                 Expr::String(s.clone())
             }
-            Token::Keyword(s) if s == "true" => {
+            Token::Keyword(ref s) if s == "true" => {
                 self.advance();
                 Expr::Bool(true)
             }
-            Token::Keyword(s) if s == "false" => {
+            Token::Keyword(ref s) if s == "false" => {
                 self.advance();
                 Expr::Bool(false)
             }
-            Token::Keyword(s) if s == "null" => {
+            Token::Keyword(ref s) if s == "null" => {
                 self.advance();
                 Expr::Null
             }
@@ -1044,14 +1209,13 @@ impl Parser {
             Token::Operator(s) if s == "(" => {
                 self.advance();
                 if self.is_op(")") {
-                    // Empty parens: not a group, check for lambda
-                    self.advance(); // ")"
+                    self.advance();
                     if self.is_op("->") {
-                        self.advance(); // "->"
+                        self.advance();
                         let body = if self.is_op("{") {
                             match self.parse_block() {
                                 Stmt::Block(b) => b,
-                                _ => unreachable!(),
+                                _ => Block { stmts: vec![] },
                             }
                         } else {
                             let e = self.parse_expr();
@@ -1061,7 +1225,6 @@ impl Parser {
                     }
                     return Expr::Null;
                 }
-                // Try lambda: (Identifier, ...) -> ...
                 if self.try_parse_lambda() {
                     return self.parse_lambda_body();
                 }
@@ -1071,16 +1234,21 @@ impl Parser {
             }
             Token::Operator(s) if s == "[" => self.parse_array(),
             Token::Operator(s) if s == "{" => self.parse_dict(),
-            Token::Keyword(s) if s == "if" => self.parse_if_expr(),
-            Token::Keyword(s) if s == "match" => self.parse_match_expr(),
-            _ => panic!("Unexpected token in expression: {:?}", self.peek()),
+            Token::Keyword(ref s) if s == "if" => self.parse_if_expr(),
+            Token::Keyword(ref s) if s == "match" => self.parse_match_expr(),
+            t => {
+                self.error(format!(
+                    "unexpected token in expression: {}",
+                    token_desc(&t)
+                ));
+                self.advance();
+                Expr::Null
+            }
         }
     }
 
     fn try_parse_lambda(&mut self) -> bool {
-        // Save position to backtrack
         let saved = self.pos;
-        // Check pattern: Identifier (or Identifier: Type) , ... ) ->
         while !self.at_end() {
             match self.peek() {
                 Token::Operator(s) if s == ")" => {
@@ -1110,13 +1278,12 @@ impl Parser {
     }
 
     fn parse_lambda_body(&mut self) -> Expr {
-        // self.pos is already restored; re-parse as lambda
         let params = self.parse_params();
         self.expect_operator("->");
         let body = if self.is_op("{") {
             match self.parse_block() {
                 Stmt::Block(b) => b,
-                _ => unreachable!(),
+                _ => Block { stmts: vec![] },
             }
         } else {
             let e = self.parse_expr();
@@ -1126,7 +1293,7 @@ impl Parser {
     }
 
     fn parse_array(&mut self) -> Expr {
-        self.advance(); // "["
+        self.advance();
         let mut items = Vec::new();
         self.skip_newlines();
         if !self.is_op("]") {
@@ -1137,7 +1304,8 @@ impl Parser {
                 } else if self.is_op("]") {
                     break;
                 } else {
-                    panic!("Expected ',' or ']', got {:?}", self.peek());
+                    self.err_expected("',' or ']'", &self.peek().clone());
+                    break;
                 }
             }
         }
@@ -1146,7 +1314,7 @@ impl Parser {
     }
 
     fn parse_dict(&mut self) -> Expr {
-        self.advance(); // "{"
+        self.advance();
         let mut entries = Vec::new();
         self.skip_newlines();
         if !self.is_op("}") {
@@ -1160,7 +1328,8 @@ impl Parser {
                 } else if self.is_op("}") {
                     break;
                 } else {
-                    panic!("Expected ',' or '}}', got {:?}", self.peek());
+                    self.err_expected("',' or '}'", &self.peek().clone());
+                    break;
                 }
             }
         }
@@ -1169,7 +1338,7 @@ impl Parser {
     }
 
     fn parse_match_expr(&mut self) -> Expr {
-        self.advance(); // "match"
+        self.advance();
         let expr = self.parse_expr();
         let branches = self.parse_match_body();
         Expr::MatchExpr {
@@ -1183,14 +1352,20 @@ impl Parser {
         let cond = self.parse_expr();
         let then_block = match self.parse_block() {
             Stmt::Block(b) => b,
-            _ => panic!("Expected block after if condition"),
+            _ => {
+                self.error("expected block after if condition".to_string());
+                Block { stmts: vec![] }
+            }
         };
 
         let else_block = if self.is_kw("else") {
             self.advance();
             match self.parse_block() {
                 Stmt::Block(b) => Some(b),
-                _ => panic!("Expected block after else"),
+                _ => {
+                    self.error("expected block after else".to_string());
+                    None
+                }
             }
         } else {
             None
@@ -1218,13 +1393,14 @@ impl Parser {
                 self.advance();
                 break;
             } else {
-                panic!("Expected ',' or ')', got {:?}", self.peek());
+                self.err_expected("',' or ')'", &self.peek().clone());
+                break;
             }
         }
         args
     }
 
-    // ── Pratt Helpers ─────────────────────────────────────
+    // 鈹€鈹€ Pratt Helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn is_compound_assign(&self) -> bool {
         matches!(self.peek(), Token::Operator(s) if matches!(s.as_str(), "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^="))
@@ -1270,5 +1446,18 @@ impl Parser {
             Token::Keyword(s) if s == "as" || s == "as!" => 65,
             _ => 0,
         }
+    }
+}
+
+fn token_desc(token: &Token) -> String {
+    match token {
+        Token::Number(n) => format!("number {:?}", n),
+        Token::String(s) => format!("\"{}\"", s),
+        Token::Identifier(s) => format!("identifier '{}'", s),
+        Token::Keyword(s) => format!("keyword '{}'", s),
+        Token::Operator(s) => format!("'{}'", s),
+        Token::NewLine => "newline".to_string(),
+        Token::Error(s) => format!("error: {}", s),
+        Token::Eof => "end of file".to_string(),
     }
 }

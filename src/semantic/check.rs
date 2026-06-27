@@ -323,6 +323,9 @@ pub fn types_compatible(expected: &Type, actual: &Type) -> bool {
     if expected == actual {
         return true;
     }
+    if matches!(expected, Type::Base(BaseType::Any)) || matches!(actual, Type::Base(BaseType::Any)) {
+        return true;
+    }
     if is_numeric(expected) && is_numeric(actual) {
         return true;
     }

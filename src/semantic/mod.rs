@@ -2,24 +2,28 @@ pub mod check;
 
 use crate::parser::ast::*;
 use crate::parser::symbol::SymbolTable;
+use crate::error::DiagnosticBag;
 
 pub struct SemanticAnalyzer {
     symbols: SymbolTable,
     errors: Vec<String>,
     return_type: Option<Type>,
+    diagnostics: DiagnosticBag,
 }
 
 impl SemanticAnalyzer {
-    pub fn analyze(program: &[Stmt]) -> Result<SymbolTable, Vec<String>> {
+    pub fn analyze(program: &[Stmt], diagnostics: &mut DiagnosticBag) -> Result<SymbolTable, Vec<String>> {
         let mut sa = SemanticAnalyzer {
             symbols: SymbolTable::new(),
             errors: Vec::new(),
             return_type: None,
+            diagnostics: DiagnosticBag::new(""),
         };
         for stmt in program {
             sa.analyze_stmt(stmt);
         }
         sa.check_entry_point(program);
+        diagnostics.diagnostics.append(&mut sa.diagnostics.diagnostics);
         if sa.errors.is_empty() {
             Ok(sa.symbols)
         } else {
@@ -28,7 +32,8 @@ impl SemanticAnalyzer {
     }
 
     fn error(&mut self, msg: String) {
-        self.errors.push(msg);
+        self.errors.push(msg.clone());
+        self.diagnostics.error(msg, crate::error::Span::new(1, 1));
     }
 
     fn type_mismatch(&mut self, expected: &Type, actual: &Type, context: &str) {
@@ -46,10 +51,18 @@ impl SemanticAnalyzer {
         match stmt {
             Stmt::FuncDef {
                 name,
+                generics,
                 params,
                 ret_ty,
                 body,
+                ..
             } => {
+                if !generics.is_empty() {
+                    self.diagnostics.warn(
+                        format!("generics on function '{}' are parsed but not yet lowered", name),
+                        crate::error::Span::new(1, 1),
+                    );
+                }
                 self.analyze_func_def(name, params, ret_ty, body);
                 None
             }
@@ -71,11 +84,23 @@ impl SemanticAnalyzer {
                 None
             }
             Stmt::Break(_) | Stmt::Continue(_) => None,
-            Stmt::ClassDef { name, members, .. } => {
+            Stmt::ClassDef { name, generics, members, .. } => {
+                if !generics.is_empty() {
+                    self.diagnostics.warn(
+                        format!("generics on class '{}' are parsed but not yet lowered", name),
+                        crate::error::Span::new(1, 1),
+                    );
+                }
                 self.analyze_class_def(name, members);
                 None
             }
-            Stmt::EnumDef { name, .. } => {
+            Stmt::EnumDef { name, generics, .. } => {
+                if !generics.is_empty() {
+                    self.diagnostics.warn(
+                        format!("generics on enum '{}' are parsed but not yet lowered", name),
+                        crate::error::Span::new(1, 1),
+                    );
+                }
                 self.symbols.declare(name.clone(), None, false);
                 None
             }
@@ -85,7 +110,44 @@ impl SemanticAnalyzer {
                 None
             }
             Stmt::Block(block) => self.analyze_block(block),
-            Stmt::Match { .. } | Stmt::TryCatch { .. } | Stmt::Throw(_) | Stmt::Assert { .. } | Stmt::WrapDef { .. } => None,
+            Stmt::Match { expr, branches } => {
+                let _ = self.analyze_expr(expr);
+                for branch in branches {
+                    self.symbols.push_scope();
+                    for s in &branch.body.stmts {
+                        self.analyze_stmt(s);
+                    }
+                    self.symbols.pop_scope();
+                }
+                None
+            }
+            Stmt::TryCatch { try_block, catches } => {
+                self.symbols.push_scope();
+                for s in &try_block.stmts {
+                    self.analyze_stmt(s);
+                }
+                self.symbols.pop_scope();
+                for catch in catches {
+                    self.symbols.push_scope();
+                    if let Some(var) = &catch.var {
+                        self.symbols.declare(var.clone(), catch.ty.clone(), false);
+                    }
+                    for s in &catch.body.stmts {
+                        self.analyze_stmt(s);
+                    }
+                    self.symbols.pop_scope();
+                }
+                None
+            }
+            Stmt::Throw(expr) => {
+                let _ = self.analyze_expr(expr);
+                None
+            }
+            Stmt::Assert { expr, .. } => {
+                let _ = self.analyze_expr(expr);
+                None
+            }
+            Stmt::WrapDef { .. } => None,
         }
     }
 
@@ -147,7 +209,7 @@ impl SemanticAnalyzer {
     ) {
         let cond_ty = self.analyze_expr(cond);
         if let Some(ty) = &cond_ty {
-            if !matches!(ty, Type::Base(BaseType::Bool)) {
+            if !matches!(ty, Type::Base(BaseType::Bool) | Type::Base(BaseType::Any)) {
                 self.type_mismatch(&Type::Base(BaseType::Bool), ty, "if condition");
             }
         }
@@ -168,7 +230,7 @@ impl SemanticAnalyzer {
     fn analyze_while(&mut self, cond: &Expr, body: &Block) {
         let cond_ty = self.analyze_expr(cond);
         if let Some(ty) = &cond_ty {
-            if !matches!(ty, Type::Base(BaseType::Bool)) {
+            if !matches!(ty, Type::Base(BaseType::Bool) | Type::Base(BaseType::Any)) {
                 self.type_mismatch(&Type::Base(BaseType::Bool), ty, "while condition");
             }
         }

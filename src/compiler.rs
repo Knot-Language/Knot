@@ -1,3 +1,4 @@
+use crate::error::DiagnosticBag;
 use crate::parser::Parser;
 use crate::semantic::SemanticAnalyzer;
 use crate::ir::lower::Lower;
@@ -10,14 +11,28 @@ pub fn compile_file(source_path: &str, output_path: &str, run: bool) {
     let mut parser = Parser::new(&source);
     let program = parser.parse_program();
 
-    match SemanticAnalyzer::analyze(&program) {
+    if parser.diagnostics.has_errors() {
+        eprintln!("\n--- parse errors ---");
+        parser.diagnostics.print_all();
+        std::process::exit(1);
+    }
+    if !parser.diagnostics.diagnostics.is_empty() {
+        parser.diagnostics.print_all();
+    }
+
+    let mut diagnostics = DiagnosticBag::new(&source);
+    match SemanticAnalyzer::analyze(&program, &mut diagnostics) {
         Ok(_) => {}
         Err(errors) => {
             for e in &errors {
                 eprintln!("error: {}", e);
             }
+            diagnostics.print_all();
             std::process::exit(1);
         }
+    }
+    if !diagnostics.diagnostics.is_empty() {
+        diagnostics.print_all();
     }
 
     let tac = Lower::lower(&program);

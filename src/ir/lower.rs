@@ -12,6 +12,7 @@ pub struct Lower {
     classes: Vec<ClassIr>,
     enums: Vec<EnumIr>,
     break_label: Option<Label>,
+    catch_label: Option<Label>,
     current_ret_ty: Option<Type>,
     current_class: Option<String>,
 }
@@ -32,6 +33,7 @@ impl Lower {
             classes: Vec::new(),
             enums: Vec::new(),
             break_label: None,
+            catch_label: None,
             current_ret_ty: None,
             current_class: None,
         };
@@ -231,6 +233,7 @@ impl Lower {
                 params,
                 ret_ty,
                 body,
+                ..
             } => {
                 let prev_func = std::mem::replace(
                     &mut self.func,
@@ -368,8 +371,20 @@ impl Lower {
                 }
             }
             Stmt::Continue(_) => {}
+            Stmt::Throw(expr) => {
+                let val = self.lower_expr(expr);
+                let label = self
+                    .catch_label
+                    .clone()
+                    .unwrap_or_else(|| "_no_handler".to_string());
+                self.emit(TacInst::Throw {
+                    value: val,
+                    catch_label: label,
+                });
+            }
+            Stmt::TryCatch { try_block, catches } => self.lower_try_catch(try_block, catches),
             Stmt::FuncDef { .. } | Stmt::ClassDef { .. } | Stmt::EnumDef { .. } | Stmt::Import { .. }
-            | Stmt::Match { .. } | Stmt::TryCatch { .. } | Stmt::Throw(_) | Stmt::Assert { .. }
+            | Stmt::Match { .. } | Stmt::Assert { .. }
             | Stmt::WrapDef { .. } => {}
         }
     }
@@ -425,6 +440,31 @@ impl Lower {
 
         self.emit(TacInst::Label(end_label));
         self.break_label = prev_break;
+    }
+
+    fn lower_try_catch(&mut self, try_block: &Block, catches: &[CatchClause]) {
+        let catch_label = self.new_label("catch");
+        let end_label = self.new_label("try_end");
+        let prev_catch = self.catch_label.clone();
+
+        self.catch_label = Some(catch_label.clone());
+        self.lower_block(try_block);
+        self.catch_label = prev_catch;
+
+        self.emit(TacInst::Jmp(end_label.clone()));
+
+        self.emit(TacInst::Label(catch_label.clone()));
+
+        if let Some(first_catch) = catches.first() {
+            let exc_reg = self.new_reg();
+            self.emit(TacInst::CatchEntry(exc_reg));
+            if let Some(var) = &first_catch.var {
+                self.vars.insert(var.clone(), exc_reg);
+            }
+            self.lower_block(&first_catch.body);
+        }
+
+        self.emit(TacInst::Label(end_label));
     }
 
     fn lower_for(&mut self, var: &str, iter: &Expr, body: &Block) {

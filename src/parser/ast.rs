@@ -2,6 +2,7 @@
 pub enum Stmt {
     FuncDef {
         name: String,
+        generics: Vec<String>,
         params: Vec<Param>,
         ret_ty: Option<Type>,
         body: Block,
@@ -258,4 +259,5 @@ pub enum BaseType {
     Bool,
     Null,
     Void,
+    Any,
 }

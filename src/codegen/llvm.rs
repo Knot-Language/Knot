@@ -8,6 +8,7 @@ impl LlvmBackend {
         let mut out = String::new();
         out.push_str("declare i32 @puts(i8*)\n");
         out.push_str("declare i32 @printf(i8*, ...)\n");
+        out.push_str("@knot_exception = global i32 0\n\n");
 
         for class in &program.classes {
             emit_struct_type(&mut out, class);
@@ -310,6 +311,21 @@ fn emit_insts(
 
             TacInst::Free { .. } => {
                 pos += 1;
+            }
+
+            TacInst::CatchEntry(dest) => {
+                out.push_str(&format!("  %r{} = load i32, ptr @knot_exception\n", dest));
+                out.push_str("  store i32 0, ptr @knot_exception\n");
+                ctx.set(*dest, "i32");
+                pos += 1;
+            }
+
+            TacInst::Throw { value, catch_label } => {
+                let v = fmt_op(value, ctx);
+                out.push_str(&format!("  store i32 {}, ptr @knot_exception\n", v));
+                out.push_str(&format!("  br label %{}\n", catch_label));
+                pos += 1;
+                return pos;
             }
 
             TacInst::Call { dest, name, args } => {
