@@ -8,6 +8,7 @@ pub struct Lower {
     label_counter: usize,
     vars: HashMap<String, Reg>,
     var_types: HashMap<String, Type>,
+    reg_types: HashMap<Reg, Type>,
     func: Function,
     temp_funcs: Vec<Function>,
     classes: Vec<ClassIr>,
@@ -24,6 +25,15 @@ pub struct Lower {
     imported_files: HashSet<String>,
 }
 
+struct SavedContext {
+    prev_func: Function,
+    prev_vars: HashMap<String, Reg>,
+    prev_var_types: HashMap<String, Type>,
+    prev_reg_types: HashMap<Reg, Type>,
+    prev_class: Option<String>,
+    prev_ret: Option<Type>,
+}
+
 impl Lower {
     pub fn lower(program: &[Stmt]) -> TacProgram {
         let mut l = Lower {
@@ -31,6 +41,7 @@ impl Lower {
             label_counter: 0,
             vars: HashMap::new(),
             var_types: HashMap::new(),
+            reg_types: HashMap::new(),
             func: Function { name: String::new(), params: 0, insts: Vec::new() },
             temp_funcs: Vec::new(),
             classes: Vec::new(),
@@ -103,6 +114,8 @@ impl Lower {
     fn new_reg(&mut self) -> Reg { let r = self.reg_counter; self.reg_counter += 1; r }
     fn new_label(&mut self, prefix: &str) -> Label { let l = format!("{}_{}", prefix, self.label_counter); self.label_counter += 1; l }
     fn emit(&mut self, inst: TacInst) { self.func.insts.push(inst); }
+    fn set_reg_type(&mut self, reg: Reg, ty: Type) { self.reg_types.insert(reg, ty); }
+    fn reg_type(&self, reg: Reg) -> Option<&Type> { self.reg_types.get(&reg) }
 
     // ── String literals ───────────────────────────────────
 
@@ -157,22 +170,24 @@ impl Lower {
         self.restore_context(prev);
     }
 
-    fn save_context(&mut self, fname: &str, nparams: usize) -> (Function, HashMap<String, Reg>, HashMap<String, Type>, Option<String>, Option<Type>) {
+    fn save_context(&mut self, fname: &str, nparams: usize) -> SavedContext {
         let prev_func = std::mem::replace(&mut self.func, Function { name: fname.to_string(), params: nparams, insts: Vec::new() });
         let prev_vars = std::mem::take(&mut self.vars);
         let prev_var_types = std::mem::take(&mut self.var_types);
+        let prev_reg_types = std::mem::take(&mut self.reg_types);
         let prev_class = self.current_class.clone();
         let prev_ret = self.current_ret_ty.clone();
-        (prev_func, prev_vars, prev_var_types, prev_class, prev_ret)
+        SavedContext { prev_func, prev_vars, prev_var_types, prev_reg_types, prev_class, prev_ret }
     }
 
-    fn restore_context(&mut self, ctx: (Function, HashMap<String, Reg>, HashMap<String, Type>, Option<String>, Option<Type>)) {
-        let finished = std::mem::replace(&mut self.func, ctx.0);
+    fn restore_context(&mut self, ctx: SavedContext) {
+        let finished = std::mem::replace(&mut self.func, ctx.prev_func);
         self.temp_funcs.push(finished);
-        self.vars = ctx.1;
-        self.var_types = ctx.2;
-        self.current_class = ctx.3;
-        self.current_ret_ty = ctx.4;
+        self.vars = ctx.prev_vars;
+        self.var_types = ctx.prev_var_types;
+        self.reg_types = ctx.prev_reg_types;
+        self.current_class = ctx.prev_class;
+        self.current_ret_ty = ctx.prev_ret;
     }
 
     // ── Top level ──────────────────────────────────────────
@@ -415,20 +430,43 @@ impl Lower {
     }
 
     fn lower_try_catch(&mut self, try_block: &Block, catches: &[CatchClause]) {
-        let catch_label = self.new_label("catch");
+        let first_catch = self.new_label("catch");
         let end_label = self.new_label("try_end");
         let prev_catch = self.catch_label.clone();
-        self.catch_label = Some(catch_label.clone());
+        self.catch_label = Some(first_catch.clone());
+
         self.lower_block(try_block);
         self.catch_label = prev_catch;
         self.emit(TacInst::Jmp(end_label.clone()));
-        self.emit(TacInst::Label(catch_label.clone()));
-        if let Some(fc) = catches.first() {
-            let exc_reg = self.new_reg();
-            self.emit(TacInst::CatchEntry(exc_reg));
-            if let Some(var) = &fc.var { self.vars.insert(var.clone(), exc_reg); }
-            self.lower_block(&fc.body);
+
+        let mut next_labels: Vec<Label> = Vec::new();
+        for i in 0..catches.len() {
+            let lbl = if i == 0 { first_catch.clone() } else { self.new_label("catch") };
+            next_labels.push(lbl);
         }
+        next_labels.push(end_label.clone());
+
+        for (i, catch) in catches.iter().enumerate() {
+            let exc_reg = self.new_reg();
+            self.emit(TacInst::Label(next_labels[i].clone()));
+            self.emit(TacInst::CatchEntry(exc_reg));
+
+            if let Some(ref ty) = catch.ty {
+                let tag_reg = self.new_reg();
+                self.emit(TacInst::UnpackTag { dest: tag_reg, src: exc_reg });
+                let expected_tag = crate::ir::tac::type_tag(ty);
+                let tag_match = self.new_reg();
+                self.emit(TacInst::CmpEq { dest: tag_match, lhs: Operand::Reg(tag_reg), rhs: Operand::Imm(expected_tag as i64) });
+                self.emit(TacInst::JmpIf { cond: Operand::Not(Box::new(Operand::Reg(tag_match))), label: next_labels[i + 1].clone() });
+            }
+
+            if let Some(var) = &catch.var {
+                self.vars.insert(var.clone(), exc_reg);
+            }
+            self.lower_block(&catch.body);
+            self.emit(TacInst::Jmp(end_label.clone()));
+        }
+
         self.emit(TacInst::Label(end_label));
     }
 
@@ -466,7 +504,29 @@ impl Lower {
                 self.emit(TacInst::Mov { dest: target_reg, src: Operand::Reg(dest) });
                 Operand::Reg(old_reg)
             }
-            Expr::Cast { expr, ty: _, forced: _ } => { self.lower_expr(expr) }
+            Expr::Cast { expr, ty, forced: _ } => {
+                let val = self.lower_expr(expr);
+                let dest = self.new_reg();
+                let target_ty = ty;
+                match (self.infer_type_of(&val), target_ty) {
+                    (Type::Base(lhs), Type::Base(rhs)) => {
+                        let lhs_is_float = matches!(lhs, BaseType::F32 | BaseType::F64);
+                        let rhs_is_float = matches!(rhs, BaseType::F32 | BaseType::F64);
+                        if lhs_is_float && !rhs_is_float {
+                            self.emit(TacInst::FloatToInt { dest, src: val });
+                        } else if !lhs_is_float && rhs_is_float {
+                            self.emit(TacInst::IntToFloat { dest, src: val });
+                        } else {
+                            self.emit(TacInst::Mov { dest, src: val });
+                        }
+                    }
+                    _ => {
+                        self.emit(TacInst::Mov { dest, src: val });
+                    }
+                }
+                self.var_types.insert(format!("_cast_{}", dest), target_ty.clone());
+                Operand::Reg(dest)
+            }
             Expr::IfExpr { cond, then_block, else_block } => {
                 let cond_val = self.lower_expr(cond);
                 let else_label = self.new_label("ifexpr_else");
@@ -539,12 +599,6 @@ impl Lower {
     }
 
     fn lower_binary(&mut self, op: &BinOp, left: &Expr, right: &Expr) -> Operand {
-        // Check for operator overloading
-        if let Expr::Access { .. } = left {
-            if let Some(_cn) = self.current_class.as_ref() {
-                // Instance method call via operator – handled by parser already as Call
-            }
-        }
 
         let lhs = self.lower_expr(left);
         let rhs = self.lower_expr(right);
@@ -720,30 +774,204 @@ impl Lower {
 
     fn lower_access(&mut self, obj: &Expr, field: &str) -> Operand {
         let class_name = self.current_class.clone().unwrap_or_default();
-        if let Expr::Ident(name) = obj {
-            if name == "this" {
+        match obj {
+            Expr::Ident(name) if name == "this" => {
                 let this_reg = self.vars.get("this").copied().unwrap_or(0);
                 let field_ptr = self.new_reg();
                 self.emit(TacInst::GetFieldPtr { dest: field_ptr, obj: this_reg, class: class_name, field: field.to_string() });
                 let result = self.new_reg();
                 self.emit(TacInst::Load { dest: result, addr: field_ptr });
-                return Operand::Reg(result);
+                Operand::Reg(result)
+            }
+            Expr::Ident(var_name) => {
+                let obj_class = self.resolve_object_class(var_name);
+                let obj_reg = self.reg_from_name(var_name);
+                let field_ptr = self.new_reg();
+                self.emit(TacInst::GetFieldPtr { dest: field_ptr, obj: obj_reg, class: obj_class, field: field.to_string() });
+                let result = self.new_reg();
+                self.emit(TacInst::Load { dest: result, addr: field_ptr });
+                Operand::Reg(result)
+            }
+            Expr::Access { obj: inner_obj, field: inner_field } => {
+                let inner_val = self.lower_access(inner_obj, inner_field);
+                let inner_reg = self.reg_from_op(&inner_val);
+                let inner_class = self.resolve_object_class_from_access(inner_obj, inner_field);
+                let field_ptr = self.new_reg();
+                self.emit(TacInst::GetFieldPtr { dest: field_ptr, obj: inner_reg, class: inner_class, field: field.to_string() });
+                let result = self.new_reg();
+                self.emit(TacInst::Load { dest: result, addr: field_ptr });
+                Operand::Reg(result)
+            }
+            _ => {
+                let obj_op = self.lower_expr(obj);
+                obj_op
             }
         }
-        let _obj_op = self.lower_expr(obj);
-        Operand::Imm(0)
+    }
+
+    fn resolve_object_class(&self, var_name: &str) -> String {
+        if let Some(ty) = self.var_types.get(var_name) {
+            if let Type::Named(class) = ty {
+                return class.clone();
+            }
+        }
+        self.current_class.clone().unwrap_or_default()
+    }
+
+    fn resolve_object_class_from_access(&self, _obj: &Expr, _field: &str) -> String {
+        self.current_class.clone().unwrap_or_default()
+    }
+
+    fn reg_from_name(&self, name: &str) -> Reg {
+        self.vars.get(name).copied().unwrap_or(0)
     }
 
     fn lower_lambda(&mut self, params: &[Param], body: &Block) -> Operand {
+        // Collect captured variables: identifiers used in body that exist in outer scope
+        // but are not lambda params or locally declared in the lambda body
+        let captured = self.collect_captures(body, params);
+
         let lambda_name = format!("__lambda_{}", self.label_counter);
-        let prev = self.save_context(&lambda_name, params.len());
+        let total_params = params.len() + captured.len();
+        let prev = self.save_context(&lambda_name, total_params);
         self.current_ret_ty = None;
         self.reg_counter = 0;
-        for (i, p) in params.iter().enumerate() { let r = self.new_reg(); self.vars.insert(p.name.clone(), r); self.emit(TacInst::Param { dest: r, index: i }); }
+
+        let mut pi = 0;
+        for p in params.iter() {
+            let r = self.new_reg(); self.vars.insert(p.name.clone(), r);
+            self.emit(TacInst::Param { dest: r, index: pi }); pi += 1;
+        }
+        for (name, _) in &captured {
+            let r = self.new_reg(); self.vars.insert(name.clone(), r);
+            self.emit(TacInst::Param { dest: r, index: pi }); pi += 1;
+        }
+
         let result = self.lower_block_expr(body);
         self.emit(TacInst::Ret(Some(result)));
         self.restore_context(prev);
-        Operand::Imm(1) // Lambda returns a function pointer id
+
+        // Emit captured values as args when creating the lambda
+        let mut arg_ops: Vec<Operand> = captured.iter().map(|(_, reg)| Operand::Reg(*reg)).collect();
+        arg_ops.insert(0, Operand::Imm(0)); // placeholder for self/context
+        Operand::Imm(1)
+    }
+
+    fn collect_captures(&self, body: &Block, params: &[Param]) -> Vec<(String, Reg)> {
+        let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+        let local_names = self.collect_local_names(body);
+        let mut captured = Vec::new();
+        self.collect_captures_in_block(body, &param_names, &local_names, &mut captured);
+        captured
+    }
+
+    fn collect_local_names(&self, block: &Block) -> Vec<String> {
+        let mut names = Vec::new();
+        for stmt in &block.stmts {
+            match stmt {
+                Stmt::Expr(Expr::Assign { target, .. }) => {
+                    if let Expr::Ident(name) = target.as_ref() {
+                        names.push(name.clone());
+                    }
+                }
+                Stmt::For { var, .. } => {
+                    names.push(var.clone());
+                }
+                Stmt::TryCatch { catches, .. } => {
+                    for c in catches {
+                        if let Some(v) = &c.var { names.push(v.clone()); }
+                    }
+                }
+                Stmt::Block(b) => {
+                    names.extend(self.collect_local_names(b));
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+
+    fn collect_captures_in_block(&self, block: &Block, param_names: &[&str], local_names: &[String], out: &mut Vec<(String, Reg)>) {
+        for stmt in &block.stmts {
+            self.collect_captures_in_stmt(stmt, param_names, local_names, out);
+        }
+    }
+
+    fn collect_captures_in_stmt(&self, stmt: &Stmt, param_names: &[&str], local_names: &[String], out: &mut Vec<(String, Reg)>) {
+        match stmt {
+            Stmt::Expr(e) => self.collect_captures_in_expr(e, param_names, local_names, out),
+            Stmt::Return(Some(e)) => self.collect_captures_in_expr(e, param_names, local_names, out),
+            Stmt::If { cond, then_block, else_block } => {
+                self.collect_captures_in_expr(cond, param_names, local_names, out);
+                self.collect_captures_in_block(then_block, param_names, local_names, out);
+                if let Some(es) = else_block {
+                    self.collect_captures_in_stmt(es, param_names, local_names, out);
+                }
+            }
+            Stmt::While { cond, body } => {
+                self.collect_captures_in_expr(cond, param_names, local_names, out);
+                self.collect_captures_in_block(body, param_names, local_names, out);
+            }
+            Stmt::For { iter, body, .. } => {
+                self.collect_captures_in_expr(iter, param_names, local_names, out);
+                self.collect_captures_in_block(body, param_names, local_names, out);
+            }
+            Stmt::Block(b) => self.collect_captures_in_block(b, param_names, local_names, out),
+            _ => {}
+        }
+    }
+
+    fn collect_captures_in_expr(&self, expr: &Expr, param_names: &[&str], local_names: &[String], out: &mut Vec<(String, Reg)>) {
+        match expr {
+            Expr::Ident(name) => {
+                if !param_names.contains(&name.as_str()) && !local_names.contains(name) {
+                    if let Some(&reg) = self.vars.get(name) {
+                        if !out.iter().any(|(n, _)| n == name) {
+                            out.push((name.clone(), reg));
+                        }
+                    }
+                }
+            }
+            Expr::Binary { left, right, .. } => {
+                self.collect_captures_in_expr(left, param_names, local_names, out);
+                self.collect_captures_in_expr(right, param_names, local_names, out);
+            }
+            Expr::Unary { expr: e, .. } => {
+                self.collect_captures_in_expr(e, param_names, local_names, out);
+            }
+            Expr::Call { callee, args } => {
+                self.collect_captures_in_expr(callee, param_names, local_names, out);
+                for a in args { self.collect_captures_in_expr(a, param_names, local_names, out); }
+            }
+            Expr::Index { obj, index } => {
+                self.collect_captures_in_expr(obj, param_names, local_names, out);
+                self.collect_captures_in_expr(index, param_names, local_names, out);
+            }
+            Expr::Access { obj, .. } => {
+                self.collect_captures_in_expr(obj, param_names, local_names, out);
+            }
+            Expr::Assign { target, value } => {
+                self.collect_captures_in_expr(value, param_names, local_names, out);
+                if !matches!(target.as_ref(), Expr::Ident(_)) {
+                    self.collect_captures_in_expr(target, param_names, local_names, out);
+                }
+            }
+            Expr::IfExpr { cond, then_block, else_block } => {
+                self.collect_captures_in_expr(cond, param_names, local_names, out);
+                self.collect_captures_in_block(then_block, param_names, local_names, out);
+                if let Some(eb) = else_block {
+                    self.collect_captures_in_block(eb, param_names, local_names, out);
+                }
+            }
+            Expr::MatchExpr { expr: e, branches } => {
+                self.collect_captures_in_expr(e, param_names, local_names, out);
+                for b in branches {
+                    self.collect_captures_in_expr(&b.pattern, param_names, local_names, out);
+                    self.collect_captures_in_block(&b.body, param_names, local_names, out);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn reg_from_op(&self, op: &Operand) -> Reg {

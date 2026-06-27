@@ -52,6 +52,8 @@ pub enum TacInst {
     PackAny { dest: Reg, tag: u64, value: Operand },
     UnpackTag { dest: Reg, src: Reg },
     UnpackVal { dest: Reg, src: Reg },
+    IntToFloat { dest: Reg, src: Operand },
+    FloatToInt { dest: Reg, src: Operand },
 }
 
 #[derive(Debug, Clone)]

@@ -376,6 +376,21 @@ fn emit_insts(
                 pos += 1;
             }
 
+            TacInst::IntToFloat { dest, src } => {
+                let s = fmt_op(src, ctx);
+                let sty = op_ty(src, ctx);
+                out.push_str(&format!("  %r{} = sitofp {} {} to double\n", dest, sty, s));
+                ctx.set(*dest, "double");
+                pos += 1;
+            }
+
+            TacInst::FloatToInt { dest, src } => {
+                let s = fmt_op(src, ctx);
+                out.push_str(&format!("  %r{} = fptosi double {} to i32\n", dest, s));
+                ctx.set(*dest, "i32");
+                pos += 1;
+            }
+
             TacInst::CatchEntry(dest) => {
                 out.push_str(&format!("  %r{} = load i32, ptr @knot_exception\n", dest));
                 out.push_str("  store i32 0, ptr @knot_exception\n");
