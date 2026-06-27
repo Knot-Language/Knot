@@ -8,7 +8,10 @@ impl LlvmBackend {
         let mut out = String::new();
         out.push_str("declare i32 @puts(i8*)\n");
         out.push_str("declare i32 @printf(i8*, ...)\n");
-        out.push_str("@knot_exception = global i32 0\n\n");
+        out.push_str("declare ptr @malloc(i64)\n");
+        out.push_str("declare void @free(ptr)\n");
+        out.push_str("@knot_exception = global i32 0\n");
+
 
         for (name, val) in &program.strings {
             let len = val.len() + 1;
@@ -70,12 +73,21 @@ fn llvm_type(ty: &crate::parser::ast::Type) -> &'static str {
     use crate::parser::ast::*;
     match ty {
         Type::Base(base) => match base {
-            BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64
-            | BaseType::U8 | BaseType::U16 | BaseType::U32 | BaseType::U64 => "i32",
-            BaseType::F32 | BaseType::F64 => "double",
+            BaseType::I8 | BaseType::U8 => "i8",
+            BaseType::I16 | BaseType::U16 => "i16",
+            BaseType::I32 | BaseType::U32 => "i32",
+            BaseType::I64 | BaseType::U64 => "i64",
+            BaseType::F32 => "float",
+            BaseType::F64 => "double",
+            BaseType::Bool => "i1",
+            BaseType::Null => "i32",
+            BaseType::Void => "void",
             _ => "i32",
         },
-        _ => "i32",
+        Type::Nullable(_) => "i32",
+        Type::Named(_) => "ptr",
+        Type::Array(_) => "ptr",
+        Type::Map(..) => "ptr",
     }
 }
 
@@ -307,20 +319,31 @@ fn emit_insts(
 
             TacInst::Load { dest, addr } => {
                 let addr_str = fmt_op(&Operand::Reg(*addr), ctx);
-                out.push_str(&format!("  %r{} = load i32, ptr {}\n", dest, addr_str));
-                ctx.set(*dest, "i32");
+                let load_ty = ctx.get(*dest).to_string();
+                if load_ty == "ptr" {
+                    out.push_str(&format!("  %r{} = load ptr, ptr {}\n", dest, addr_str));
+                } else {
+                    out.push_str(&format!("  %r{} = load {}, ptr {}\n", dest, load_ty, addr_str));
+                }
+                ctx.set(*dest, &load_ty);
                 pos += 1;
             }
 
             TacInst::Store { addr, src } => {
                 let addr_str = fmt_op(&Operand::Reg(*addr), ctx);
                 let src_str = fmt_op(src, ctx);
-                out.push_str(&format!("  store i32 {}, ptr {}\n", src_str, addr_str));
+                let src_ty = op_ty(src, ctx);
+                out.push_str(&format!("  store {} {}, ptr {}\n", src_ty, src_str, addr_str));
                 pos += 1;
             }
 
             TacInst::Alloc { dest, ty } => {
-                let ll_ty = llvm_type(ty);
+                let ll_ty = match ty {
+                    crate::parser::ast::Type::Named(name) => {
+                        format!("%{}", name)
+                    }
+                    _ => llvm_type(ty).to_string(),
+                };
                 out.push_str(&format!("  %r{} = alloca {}\n", dest, ll_ty));
                 ctx.set(*dest, "ptr");
                 pos += 1;
@@ -349,6 +372,21 @@ fn emit_insts(
                 out.push_str(&format!("  %r{} = load i32, ptr @knot_exception\n", dest));
                 out.push_str("  store i32 0, ptr @knot_exception\n");
                 ctx.set(*dest, "i32");
+                pos += 1;
+            }
+
+            TacInst::AllocArray { dest, count } => {
+                let c = fmt_op(count, ctx);
+                out.push_str(&format!("  %r{} = alloca i32, i32 {}\n", dest, c));
+                ctx.set(*dest, "ptr");
+                pos += 1;
+            }
+
+            TacInst::GetElemPtr { dest, obj, index } => {
+                let obj_str = fmt_op(&Operand::Reg(*obj), ctx);
+                let idx_str = fmt_op(index, ctx);
+                out.push_str(&format!("  %r{} = getelementptr i32, ptr {}, i32 {}\n", dest, obj_str, idx_str));
+                ctx.set(*dest, "ptr");
                 pos += 1;
             }
 

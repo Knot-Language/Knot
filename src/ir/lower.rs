@@ -20,6 +20,8 @@ pub struct Lower {
     strings: Vec<(String, String)>,
     func_params: HashMap<String, Vec<Param>>,
     all_class_members: HashMap<String, Vec<ClassMember>>,
+    generic_funcs: HashMap<String, (Stmt, Vec<String>)>,
+    monomorphized_funcs: HashMap<String, bool>,
 }
 
 struct SavedContext {
@@ -50,6 +52,8 @@ impl Lower {
             strings: Vec::new(),
             func_params: HashMap::new(),
             all_class_members: HashMap::new(),
+            generic_funcs: HashMap::new(),
+            monomorphized_funcs: HashMap::new(),
         };
 
         // First pass: collect func params and class members
@@ -72,8 +76,11 @@ impl Lower {
 
     fn collect_info(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::FuncDef { name, params, .. } => {
+            Stmt::FuncDef { name, params, generics, .. } => {
                 self.func_params.insert(name.clone(), params.clone());
+                if !generics.is_empty() {
+                    self.generic_funcs.insert(name.clone(), (stmt.clone(), generics.clone()));
+                }
             }
             Stmt::ClassDef { name, members, .. } => {
                 self.all_class_members.insert(name.clone(), members.clone());
@@ -197,6 +204,7 @@ impl Lower {
                     if ret_ty.is_none() || matches!(ret_ty, Some(Type::Base(BaseType::Void))) { self.emit(TacInst::Ret(None)); }
                     self.restore_context(prev);
                 }
+                // Generic funcs are stored in collect_info, monomorphized on first call
             }
             Stmt::ClassDef { name, mixins, abstract_class, members, .. } => {
                 let mixin_names: Vec<String> = mixins.iter().map(|(n, _)| n.clone()).collect();
@@ -550,21 +558,42 @@ impl Lower {
                 Operand::Reg(result)
             }
             Expr::Array(items, _) => {
-                let r = self.new_reg();
-                self.emit(TacInst::Mov { dest: r, src: Operand::Imm(items.len() as i64) });
-                Operand::Reg(r)
+                let arr = self.new_reg();
+                let count = Operand::Imm(items.len() as i64);
+                self.emit(TacInst::AllocArray { dest: arr, count });
+                for (i, item) in items.iter().enumerate() {
+                    let val = self.lower_expr(item);
+                    let ptr = self.new_reg();
+                    self.emit(TacInst::GetElemPtr { dest: ptr, obj: arr, index: Operand::Imm(i as i64) });
+                    self.emit(TacInst::Store { addr: ptr, src: val });
+                }
+                Operand::Reg(arr)
             }
             Expr::Dict(entries, _) => {
-                let r = self.new_reg();
-                self.emit(TacInst::Mov { dest: r, src: Operand::Imm(entries.len() as i64) });
-                Operand::Reg(r)
+                let map = self.new_reg();
+                let _count = Operand::Imm(entries.len() as i64);
+                self.emit(TacInst::AllocArray { dest: map, count: Operand::Imm((entries.len() * 2) as i64) });
+                for (i, (k, v)) in entries.iter().enumerate() {
+                    let key_val = self.lower_expr(k);
+                    let val_val = self.lower_expr(v);
+                    let key_ptr = self.new_reg();
+                    self.emit(TacInst::GetElemPtr { dest: key_ptr, obj: map, index: Operand::Imm((i * 2) as i64) });
+                    self.emit(TacInst::Store { addr: key_ptr, src: key_val });
+                    let val_ptr = self.new_reg();
+                    self.emit(TacInst::GetElemPtr { dest: val_ptr, obj: map, index: Operand::Imm((i * 2 + 1) as i64) });
+                    self.emit(TacInst::Store { addr: val_ptr, src: val_val });
+                }
+                Operand::Reg(map)
             }
             Expr::Index { obj, index, .. } => {
-                let _o = self.lower_expr(obj);
-                let _i = self.lower_expr(index);
-                let r = self.new_reg();
-                self.emit(TacInst::Mov { dest: r, src: Operand::Imm(0) });
-                Operand::Reg(r)
+                let obj_reg = self.lower_expr(obj);
+                let idx_op = self.lower_expr(index);
+                let obj_r = match &obj_reg { Operand::Reg(r) => *r, _ => 0 };
+                let elem_ptr = self.new_reg();
+                self.emit(TacInst::GetElemPtr { dest: elem_ptr, obj: obj_r, index: idx_op });
+                let result = self.new_reg();
+                self.emit(TacInst::Load { dest: result, addr: elem_ptr });
+                Operand::Reg(result)
             }
         }
     }
@@ -677,10 +706,13 @@ impl Lower {
             _ => return Operand::Imm(0),
         };
 
+        // Check monomorphization: if this is a generic function call
+        let resolved_name = self.resolve_generic_call(&name, args);
+
         let mut arg_ops = Vec::new();
         if let Some(this) = this_arg { arg_ops.push(this); }
 
-        let params_clone = self.func_params.get(&name).cloned();
+        let params_clone = self.func_params.get(&resolved_name).cloned();
         if let Some(func_params) = params_clone {
             for (i, param) in func_params.iter().enumerate() {
                 if i < args.len() {
@@ -696,14 +728,58 @@ impl Lower {
         }
 
         let dest = self.new_reg();
-        self.emit(TacInst::Call { dest: Some(dest), name, args: arg_ops });
+        self.emit(TacInst::Call { dest: Some(dest), name: resolved_name, args: arg_ops });
         Operand::Reg(dest)
+    }
+
+    fn resolve_generic_call(&mut self, name: &str, args: &[Expr]) -> String {
+        let generics: Vec<String> = match self.generic_funcs.get(name) {
+            Some((_, g)) => g.clone(),
+            None => return name.to_string(),
+        };
+        let inferred = infer_type_from_args(args, &generics);
+        if let Some(ty) = inferred {
+            let mono_name = format!("{}_{}", name, sanitize_type_name(&ty));
+            if !self.monomorphized_funcs.contains_key(&mono_name) {
+                self.monomorphize(name, &mono_name, &generics, &ty);
+            }
+            return mono_name;
+        }
+        name.to_string()
+    }
+
+    fn monomorphize(&mut self, generic_name: &str, mono_name: &str, generics: &[String], concrete_ty: &Type) {
+        self.monomorphized_funcs.insert(mono_name.to_string(), true);
+
+        if let Some((stmt, _)) = self.generic_funcs.get(generic_name) {
+            let mut mono_stmt = stmt.clone();
+            for g in generics {
+                substitute_type_param(&mut mono_stmt, g, concrete_ty);
+            }
+            if let Stmt::FuncDef { name: _, params, ret_ty, body, .. } = &mono_stmt {
+                let mono_name_copy = mono_name.to_string();
+                let params_copy = params.clone();
+                let ret_ty_copy = ret_ty.clone();
+                let body_copy = body.clone();
+                self.func_params.insert(mono_name_copy.clone(), params_copy.clone());
+                let prev = self.save_context(&mono_name_copy, params_copy.len());
+                self.current_ret_ty = ret_ty_copy.clone();
+                self.reg_counter = 0;
+                for (i, p) in params_copy.iter().enumerate() {
+                    let r = self.new_reg(); self.vars.insert(p.name.clone(), r);
+                    self.emit(TacInst::Param { dest: r, index: i });
+                }
+                self.lower_block(&body_copy);
+                if ret_ty_copy.is_none() || matches!(ret_ty_copy, Some(Type::Base(BaseType::Void))) { self.emit(TacInst::Ret(None)); }
+                self.restore_context(prev);
+            }
+        }
     }
 
     fn lower_assign(&mut self, target: &Expr, value: &Expr) -> Operand {
         let val = self.lower_expr(value);
 
-        let (dest_reg, target_name) = match target {
+        let (dest_reg, _target_name) = match target {
             Expr::Ident(name, _) => {
                 let r = if let Some(&r) = self.vars.get(name) { r }
                 else { let r = self.new_reg(); self.vars.insert(name.clone(), r); r };
@@ -724,8 +800,19 @@ impl Lower {
         Operand::Reg(dest_reg)
     }
 
-    fn infer_type_of(&self, _op: &Operand) -> Type {
-        Type::Base(BaseType::I32)
+    fn infer_type_of(&self, op: &Operand) -> Type {
+        match op {
+            Operand::F64(_) => Type::Base(BaseType::F64),
+            Operand::Bool(_) => Type::Base(BaseType::Bool),
+            Operand::Reg(r) => {
+                if let Some(ty) = self.var_types.get(&format!("_cast_{}", r)) {
+                    ty.clone()
+                } else {
+                    Type::Base(BaseType::I32)
+                }
+            }
+            _ => Type::Base(BaseType::I32),
+        }
     }
 
     fn lower_access(&mut self, obj: &Expr, field: &str) -> Operand {
@@ -783,10 +870,7 @@ impl Lower {
     }
 
     fn lower_lambda(&mut self, params: &[Param], body: &Block) -> Operand {
-        // Collect captured variables: identifiers used in body that exist in outer scope
-        // but are not lambda params or locally declared in the lambda body
         let captured = self.collect_captures(body, params);
-
         let lambda_name = format!("__lambda_{}", self.label_counter);
         let total_params = params.len() + captured.len();
         let prev = self.save_context(&lambda_name, total_params);
@@ -807,9 +891,7 @@ impl Lower {
         self.emit(TacInst::Ret(Some(result)));
         self.restore_context(prev);
 
-        // Emit captured values as args when creating the lambda
-        let mut arg_ops: Vec<Operand> = captured.iter().map(|(_, reg)| Operand::Reg(*reg)).collect();
-        arg_ops.insert(0, Operand::Imm(0)); // placeholder for self/context
+        self.func_params.insert(lambda_name.clone(), params.to_vec());
         Operand::Imm(1)
     }
 
@@ -988,7 +1070,8 @@ fn sanitize_type_name(ty: &Type) -> String {
         Type::Base(b) => format!("{:?}", b),
         Type::Nullable(inner) => format!("Nullable{:?}", inner),
         Type::Named(n) => n.clone(),
-        Type::Array(_) => "Array".to_string(),
+        Type::Array(inner) => format!("Array_{}", sanitize_type_name(inner)),
+        Type::Map(k, v) => format!("Map_{}_{}", sanitize_type_name(k), sanitize_type_name(v)),
     }
 }
 
@@ -1067,6 +1150,10 @@ fn substitute_type(ty: &mut Type, from: &str, to: &Type) {
         Type::Named(n) if n == from => { *ty = to.clone(); }
         Type::Nullable(inner) => substitute_type(inner, from, to),
         Type::Array(inner) => substitute_type(inner, from, to),
+        Type::Map(k, v) => {
+            substitute_type(k, from, to);
+            substitute_type(v, from, to);
+        }
         _ => {}
     }
 }

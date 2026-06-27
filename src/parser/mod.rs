@@ -1007,6 +1007,20 @@ impl Parser {
                 "Bool" => Type::Base(BaseType::Bool),
                 "Null" => Type::Base(BaseType::Null),
                 "Void" => Type::Base(BaseType::Void),
+                "Array" if self.is_op("[") => {
+                    self.advance(); // consume '['
+                    let elem = self.parse_type();
+                    self.expect_operator("]");
+                    Type::Array(Box::new(elem))
+                }
+                "Map" if self.is_op("[") => {
+                    self.advance(); // consume '['
+                    let key = self.parse_type();
+                    self.expect_operator(",");
+                    let val = self.parse_type();
+                    self.expect_operator("]");
+                    Type::Map(Box::new(key), Box::new(val))
+                }
                 _ => Type::Named(s.clone()),
             },
             t => {

@@ -66,18 +66,12 @@ impl SemanticAnalyzer {
         match stmt {
             Stmt::FuncDef {
                 name,
-                generics,
+                generics: _,
                 params,
                 ret_ty,
                 body,
                 ..
             } => {
-                if !generics.is_empty() {
-                    self.diagnostics.warn(
-                        format!("generics on function '{}' are parsed but not yet lowered", name),
-                        crate::error::Span::new(1, 1),
-                    );
-                }
                 self.analyze_func_def(name, params, ret_ty, body);
                 None
             }
@@ -99,23 +93,11 @@ impl SemanticAnalyzer {
                 None
             }
             Stmt::Break(_) | Stmt::Continue(_) => None,
-            Stmt::ClassDef { name, generics, members, mixins, .. } => {
-                if !generics.is_empty() {
-                    self.diagnostics.warn(
-                        format!("generics on class '{}' are parsed but not yet lowered", name),
-                        crate::error::Span::new(1, 1),
-                    );
-                }
+            Stmt::ClassDef { name, members, mixins, .. } => {
                 self.analyze_class_def(name, members, mixins);
                 None
             }
-            Stmt::EnumDef { name, generics, .. } => {
-                if !generics.is_empty() {
-                    self.diagnostics.warn(
-                        format!("generics on enum '{}' are parsed but not yet lowered", name),
-                        crate::error::Span::new(1, 1),
-                    );
-                }
+            Stmt::EnumDef { name, .. } => {
                 self.symbols.declare(name.clone(), None);
                 None
             }
