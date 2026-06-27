@@ -12,6 +12,7 @@ enum Command {
     New { name: String },
     Tie { #[arg(required = false)] _package: Option<String> },
     Untie { #[arg(required = false)] _package: Option<String> },
+    Lsp,
     Build {
         source: Option<String>,
         #[arg(short = 'o', long = "output")]
@@ -22,7 +23,6 @@ enum Command {
         #[arg(short = 'o', long = "output")]
         output: Option<String>,
     },
-    Lsp,
 }
 
 fn main() {
@@ -30,14 +30,12 @@ fn main() {
         Command::New { name } => cmd_new(&name),
         Command::Tie { .. } => cmd_stub("tie"),
         Command::Untie { .. } => cmd_stub("untie"),
+        Command::Lsp => knot::lsp::run(),
         Command::Build { source, output } => {
             cmd_build_or_run(source, output, false);
         }
         Command::Run { source, output } => {
             cmd_build_or_run(source, output, true);
-        }
-        Command::Lsp => {
-            knot::lsp::run_lsp();
         }
     }
 }

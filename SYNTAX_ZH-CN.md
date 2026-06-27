@@ -47,6 +47,21 @@ camelCase
 PascalCase
 ```
 
+### 命名规范
+
+Knot 采用以下命名约定（编译器不强制，但强烈推荐）：
+
+| 类别 | 风格 | 示例 |
+|------|------|------|
+| 类名、枚举名、文件名 | **PascalCase**（大驼峰） | `HttpClient`, `Point2D`, `main.knot` |
+| 函数名、方法名 | **camelCase**（小驼峰） | `getUser`, `parseInt`, `toString` |
+| 字段名、变量名 | **camelCase**（小驼峰） | `firstName`, `itemCount`, `isReady` |
+| Wrap 名 | **camelCase**（小驼峰） | `debugLog`, `withTransaction` |
+| 常量 | **UPPER_SNAKE_CASE** | `MAX_SIZE`, `DEFAULT_PORT` |
+
+统一原因：类与实例通过大小写即可区分——`Point` 是类，`point` 是变量；
+`Point.getX()` 一眼看出 `Point` 是类名、`getX` 是方法。
+
 ### 注释
 
 单行注释从 `//` 到行尾。多行注释以 `/*` 开始、`*/` 结束，可嵌套。

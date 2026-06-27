@@ -1,14 +1,12 @@
 use crate::parser::ast::*;
 use crate::ir::tac::*;
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 pub struct Lower {
     reg_counter: Reg,
     label_counter: usize,
     vars: HashMap<String, Reg>,
     var_types: HashMap<String, Type>,
-    reg_types: HashMap<Reg, Type>,
     func: Function,
     temp_funcs: Vec<Function>,
     classes: Vec<ClassIr>,
@@ -22,16 +20,12 @@ pub struct Lower {
     strings: Vec<(String, String)>,
     func_params: HashMap<String, Vec<Param>>,
     all_class_members: HashMap<String, Vec<ClassMember>>,
-    imported_files: HashSet<String>,
-    generic_templates: HashMap<String, (Vec<String>, Box<Stmt>)>,
-    monomorphized: HashSet<String>,
 }
 
 struct SavedContext {
     prev_func: Function,
     prev_vars: HashMap<String, Reg>,
     prev_var_types: HashMap<String, Type>,
-    prev_reg_types: HashMap<Reg, Type>,
     prev_class: Option<String>,
     prev_ret: Option<Type>,
 }
@@ -43,7 +37,6 @@ impl Lower {
             label_counter: 0,
             vars: HashMap::new(),
             var_types: HashMap::new(),
-            reg_types: HashMap::new(),
             func: Function { name: String::new(), params: 0, insts: Vec::new() },
             temp_funcs: Vec::new(),
             classes: Vec::new(),
@@ -57,9 +50,6 @@ impl Lower {
             strings: Vec::new(),
             func_params: HashMap::new(),
             all_class_members: HashMap::new(),
-            imported_files: HashSet::new(),
-            generic_templates: HashMap::new(),
-            monomorphized: HashSet::new(),
         };
 
         // First pass: collect func params and class members
@@ -118,8 +108,6 @@ impl Lower {
     fn new_reg(&mut self) -> Reg { let r = self.reg_counter; self.reg_counter += 1; r }
     fn new_label(&mut self, prefix: &str) -> Label { let l = format!("{}_{}", prefix, self.label_counter); self.label_counter += 1; l }
     fn emit(&mut self, inst: TacInst) { self.func.insts.push(inst); }
-    fn set_reg_type(&mut self, reg: Reg, ty: Type) { self.reg_types.insert(reg, ty); }
-    fn reg_type(&self, reg: Reg) -> Option<&Type> { self.reg_types.get(&reg) }
 
     // ── String literals ───────────────────────────────────
 
@@ -178,10 +166,9 @@ impl Lower {
         let prev_func = std::mem::replace(&mut self.func, Function { name: fname.to_string(), params: nparams, insts: Vec::new() });
         let prev_vars = std::mem::take(&mut self.vars);
         let prev_var_types = std::mem::take(&mut self.var_types);
-        let prev_reg_types = std::mem::take(&mut self.reg_types);
         let prev_class = self.current_class.clone();
         let prev_ret = self.current_ret_ty.clone();
-        SavedContext { prev_func, prev_vars, prev_var_types, prev_reg_types, prev_class, prev_ret }
+        SavedContext { prev_func, prev_vars, prev_var_types, prev_class, prev_ret }
     }
 
     fn restore_context(&mut self, ctx: SavedContext) {
@@ -189,7 +176,6 @@ impl Lower {
         self.temp_funcs.push(finished);
         self.vars = ctx.prev_vars;
         self.var_types = ctx.prev_var_types;
-        self.reg_types = ctx.prev_reg_types;
         self.current_class = ctx.prev_class;
         self.current_ret_ty = ctx.prev_ret;
     }
@@ -199,9 +185,7 @@ impl Lower {
     fn lower_top_level(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::FuncDef { name, generics, params, ret_ty, body, .. } => {
-                if !generics.is_empty() {
-                    self.generic_templates.insert(name.clone(), (generics.clone(), Box::new(stmt.clone())));
-                } else {
+                if generics.is_empty() {
                     let prev = self.save_context(name, params.len());
                     self.current_ret_ty = ret_ty.clone();
                     self.reg_counter = 0;
@@ -272,9 +256,6 @@ impl Lower {
                 return;
             }
         };
-        if !self.imported_files.insert(canon.clone()) {
-            return;
-        }
         match std::fs::read_to_string(&canon) {
             Ok(source) => {
                 let mut parser = crate::parser::Parser::new(&source);
@@ -703,19 +684,6 @@ impl Lower {
             }
             _ => return Operand::Imm(0),
         };
-
-        // Monomorphize generic calls before lowering args
-        if let Some((generics, template)) = self.generic_templates.get(&name).cloned() {
-            if let Some(concrete_ty) = infer_type_from_args(args, &generics) {
-                let mono_name = format!("{}_{}", name, sanitize_type_name(&concrete_ty));
-                if self.monomorphized.insert(mono_name.clone()) {
-                    let mut substituted = (*template).clone();
-                    substitute_type_param(&mut substituted, &generics[0], &concrete_ty);
-                    self.lower_top_level(&substituted);
-                }
-                name = mono_name;
-            }
-        }
 
         let mut arg_ops = Vec::new();
         if let Some(this) = this_arg { arg_ops.push(this); }
