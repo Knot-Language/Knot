@@ -69,7 +69,7 @@ Single-line comments start with `//` and extend to the end of the line. Multi-li
 The following are reserved keywords and cannot be used as identifiers:
 
 ```
-abstract  Any      args     as       as!
+abstract  args     as       as!
 assert    break    catch    class    continue
 delete    else     enum     false    for
 func      if       import   in       kwargs
@@ -306,9 +306,6 @@ func sumAll(args items: Array[I32]) -> I32 {
     return total
 }
 
-func config(kwargs opts: Map[String, Any]) {
-    // ...
-}
 ```
 
 ### Return
@@ -851,7 +848,6 @@ func main() -> I32 {
 | Boolean | `Bool` | `true` / `false` |
 | Null | `Null` | Sole value `null` |
 | Void | `Void` | No return value |
-| Dynamic | `Any` | Accepts any type |
 
 ### Compound Types
 
@@ -871,19 +867,3 @@ func main() -> I32 {
 - `null` → `Null`
 - Array `[1, 2, 3]` → `Array[I32]`
 - Binary operation: result type is the wider of the two operands
-
-### Any Dynamic Type
-
-The `Any` keyword represents a dynamic type that can hold any value and is
-compatible with all types:
-
-```knot
-x: Any = 42
-
-func process(data: Any) {
-    // data can be anything
-}
-```
-
-Values of type `Any` should typically be cast to a concrete type via `as`
-or `as!` before use. `Any` is a reserved keyword.

@@ -82,7 +82,7 @@ Knot 采用以下命名约定（编译器不强制，但强烈推荐）：
 以下为保留关键字，不可用作标识符：
 
 ```
-abstract  Any      args     as       as!
+abstract  args     as       as!
 assert    break    catch    class    continue
 delete    else     enum     false    for
 func      if       import   in       kwargs
@@ -323,9 +323,6 @@ func sumAll(args items: Array[I32]) -> I32 {
     return total
 }
 
-func config(kwargs opts: Map[String, Any]) {
-    // ...
-}
 ```
 
 ### 返回值
@@ -859,7 +856,6 @@ func main() -> I32 {
 | 布尔 | `Bool` | `true` / `false` |
 | 空 | `Null` | 唯一值 `null` |
 | 无返回 | `Void` | 函数无返回值 |
-| 动态 | `Any` | 可接受任意类型 |
 
 ### 复合类型
 
@@ -879,17 +875,3 @@ func main() -> I32 {
 - `null` → `Null`
 - 数组 `[1, 2, 3]` → `Array[I32]`
 - 运算结果取操作数中较宽的类型
-
-### Any 动态类型
-
-`Any` 关键字表示动态类型，可接受任意类型的值，与所有类型兼容：
-
-```knot
-x: Any = 42
-
-func process(data: Any) {
-    // data 可以是任何类型
-}
-```
-
-Any 类型的值在使用前通常需要通过 `as` 或 `as!` 转为具体类型。`Any` 是保留关键字。

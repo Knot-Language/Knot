@@ -217,7 +217,7 @@ impl SemanticAnalyzer {
     ) {
         let cond_ty = self.analyze_expr(cond);
         if let Some(ty) = &cond_ty {
-            if !matches!(ty, Type::Base(BaseType::Bool) | Type::Base(BaseType::Any)) {
+            if !matches!(ty, Type::Base(BaseType::Bool)) {
                 self.type_mismatch(&Type::Base(BaseType::Bool), ty, "if condition");
             }
         }
@@ -238,7 +238,7 @@ impl SemanticAnalyzer {
     fn analyze_while(&mut self, cond: &Expr, body: &Block) {
         let cond_ty = self.analyze_expr(cond);
         if let Some(ty) = &cond_ty {
-            if !matches!(ty, Type::Base(BaseType::Bool) | Type::Base(BaseType::Any)) {
+            if !matches!(ty, Type::Base(BaseType::Bool)) {
                 self.type_mismatch(&Type::Base(BaseType::Bool), ty, "while condition");
             }
         }

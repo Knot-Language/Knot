@@ -48,10 +48,6 @@ pub enum TacInst {
     Throw { value: Operand, catch_label: Label },
     CatchEntry(Reg),
     LoadStrConst { dest: Reg, name: String },
-    // Any tagged union
-    PackAny { dest: Reg, tag: u64, value: Operand },
-    UnpackTag { dest: Reg, src: Reg },
-    UnpackVal { dest: Reg, src: Reg },
     IntToFloat { dest: Reg, src: Operand },
     FloatToInt { dest: Reg, src: Operand },
 }
@@ -106,30 +102,4 @@ pub struct TacProgram {
     pub classes: Vec<ClassIr>,
     pub enums: Vec<EnumIr>,
     pub strings: Vec<(String, String)>,
-}
-
-pub fn type_tag(ty: &crate::parser::ast::Type) -> u64 {
-    use crate::parser::ast::*;
-    match ty {
-        Type::Base(b) => match b {
-            BaseType::I8 => 1,
-            BaseType::I16 => 2,
-            BaseType::I32 => 3,
-            BaseType::I64 => 4,
-            BaseType::U8 => 5,
-            BaseType::U16 => 6,
-            BaseType::U32 => 7,
-            BaseType::U64 => 8,
-            BaseType::F32 => 9,
-            BaseType::F64 => 10,
-            BaseType::String => 11,
-            BaseType::Bool => 12,
-            BaseType::Null => 13,
-            BaseType::Void => 14,
-            BaseType::Any => 0,
-        },
-        Type::Nullable(_) => 15,
-        Type::Named(_) => 100,
-        Type::Array(_) => 101,
-    }
 }

@@ -1006,7 +1006,6 @@ impl Parser {
                 "Bool" => Type::Base(BaseType::Bool),
                 "Null" => Type::Base(BaseType::Null),
                 "Void" => Type::Base(BaseType::Void),
-                "Any" => Type::Base(BaseType::Any),
                 _ => Type::Named(s.clone()),
             },
             t => {

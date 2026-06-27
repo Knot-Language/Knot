@@ -262,7 +262,7 @@ impl Lexer {
             "continue", "else", "enum", "false", "for", "func", "if", "import",
             "in", "kwargs", "match", "mixin", "null", "operator", "private",
             "return", "static", "throw", "true", "try", "while", "wrap",
-            "new", "delete", "Any",
+            "new", "delete",
         ];
 
         if keywords.contains(&s.as_str()) {

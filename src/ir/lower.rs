@@ -440,15 +440,6 @@ impl Lower {
             self.emit(TacInst::Label(next_labels[i].clone()));
             self.emit(TacInst::CatchEntry(exc_reg));
 
-            if let Some(ref ty) = catch.ty {
-                let tag_reg = self.new_reg();
-                self.emit(TacInst::UnpackTag { dest: tag_reg, src: exc_reg });
-                let expected_tag = crate::ir::tac::type_tag(ty);
-                let tag_match = self.new_reg();
-                self.emit(TacInst::CmpEq { dest: tag_match, lhs: Operand::Reg(tag_reg), rhs: Operand::Imm(expected_tag as i64) });
-                self.emit(TacInst::JmpIf { cond: Operand::Not(Box::new(Operand::Reg(tag_match))), label: next_labels[i + 1].clone() });
-            }
-
             if let Some(var) = &catch.var {
                 self.vars.insert(var.clone(), exc_reg);
             }
@@ -727,20 +718,6 @@ impl Lower {
             }
             _ => (self.new_reg(), None),
         };
-
-        // If target has Any type, pack the value into tagged union
-        if let Some(ref name) = target_name {
-            if let Some(ty) = self.var_types.get(name) {
-                if matches!(ty, Type::Base(BaseType::Any)) {
-                    let tag = crate::ir::tac::type_tag(&self.infer_type_of(&val));
-                    let packed = self.new_reg();
-                    self.emit(TacInst::PackAny { dest: packed, tag, value: val });
-                    self.emit(TacInst::Mov { dest: dest_reg, src: Operand::Reg(packed) });
-                    self.var_types.insert(name.clone(), Type::Base(BaseType::Any));
-                    return Operand::Reg(dest_reg);
-                }
-            }
-        }
 
         self.emit(TacInst::Mov { dest: dest_reg, src: val });
         Operand::Reg(dest_reg)
