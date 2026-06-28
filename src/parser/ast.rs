@@ -44,6 +44,15 @@ pub enum Stmt {
         path: String,
         alias: Option<String>,
     },
+    ExternFunc {
+        name: String,
+        params: Vec<Param>,
+        ret_ty: Option<Type>,
+    },
+    ExternClass {
+        name: String,
+        fields: Vec<(String, Type)>,
+    },
     Match {
         expr: Expr,
         branches: Vec<MatchBranch>,
@@ -151,6 +160,7 @@ pub enum Expr {
     Int(i64, Span),
     Float(f64, Span),
     String(String, Span),
+    Char(u8, Span),
     Bool(bool, Span),
     Null(Span),
     Ident(String, Span),
@@ -250,6 +260,7 @@ pub enum UnaryOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Base(BaseType),
+    Pointer(Box<Type>),
     Nullable(Box<Type>),
     Named(String),
     Array(Box<Type>),
@@ -268,9 +279,8 @@ pub enum BaseType {
     U64,
     F32,
     F64,
-    String,
+    Char,
     Bool,
     Null,
-    Void,
-    Any,
+    Void
 }

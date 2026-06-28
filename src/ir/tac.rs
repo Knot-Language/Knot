@@ -11,6 +11,7 @@ pub enum Operand {
     Bool(bool),
     Label(Label),
     Not(Box<Operand>),
+    NullSentinel,
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +60,7 @@ pub struct Function {
     pub name: String,
     pub params: usize,
     pub insts: Vec<TacInst>,
+    pub ret_ty: Option<Type>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,9 +101,25 @@ pub struct EnumIr {
 }
 
 #[derive(Debug, Clone)]
+pub struct ExternFuncIr {
+    pub name: String,
+    pub param_tys: Vec<Type>,
+    pub ret_ty: Option<Type>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternClassIr {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
+}
+
+#[derive(Debug, Clone)]
 pub struct TacProgram {
     pub functions: Vec<Function>,
     pub classes: Vec<ClassIr>,
     pub enums: Vec<EnumIr>,
+    pub extern_funcs: Vec<ExternFuncIr>,
+    pub extern_classes: Vec<ExternClassIr>,
     pub strings: Vec<(String, String)>,
+    pub source_files: Vec<String>,
 }

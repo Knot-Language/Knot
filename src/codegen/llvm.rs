@@ -12,6 +12,19 @@ impl LlvmBackend {
         out.push_str("declare void @free(ptr)\n");
         out.push_str("@knot_exception = global i32 0\n");
 
+        for ef in &program.extern_funcs {
+            let ret = match &ef.ret_ty {
+                Some(ty) => llvm_type(ty).to_string(),
+                None => "void".to_string(),
+            };
+            let mut params = String::new();
+            for (i, pty) in ef.param_tys.iter().enumerate() {
+                if i > 0 { params.push_str(", "); }
+                params.push_str(llvm_type(pty));
+            }
+            out.push_str(&format!("declare {} @{}({})\n", ret, ef.name, params));
+        }
+
 
         for (name, val) in &program.strings {
             let len = val.len() + 1;
@@ -30,19 +43,21 @@ impl LlvmBackend {
         out
     }
 
-    pub fn compile_to_exe(ll_path: &str, exe_path: &str) {
+    pub fn compile_to_exe(ll_path: &str, exe_path: &str, source_files: &[String]) {
         let clang = std::env::var("KNOT_CLANG")
             .unwrap_or_else(|_| "clang".to_string());
         if std::env::var("KNOT_CLANG").is_ok() {
             eprintln!("note: using custom clang from KNOT_CLANG: {}", clang);
         }
-        match std::process::Command::new(&clang)
-            .arg(ll_path)
-            .arg("-o")
-            .arg(exe_path)
-            .arg("-Wno-override-module")
-            .status()
-        {
+        let mut cmd = std::process::Command::new(&clang);
+        cmd.arg(ll_path)
+           .arg("-o")
+           .arg(exe_path)
+           .arg("-Wno-override-module");
+        for sf in source_files {
+            cmd.arg(sf);
+        }
+        match cmd.status() {
             Ok(status) if status.success() => {}
             Ok(status) => {
                 eprintln!("error: clang exited with code {}", status.code().unwrap_or(-1));
@@ -79,15 +94,16 @@ fn llvm_type(ty: &crate::parser::ast::Type) -> &'static str {
             BaseType::I64 | BaseType::U64 => "i64",
             BaseType::F32 => "float",
             BaseType::F64 => "double",
+            BaseType::Char => "i8",
             BaseType::Bool => "i1",
             BaseType::Null => "i32",
             BaseType::Void => "void",
-            _ => "i32",
         },
         Type::Nullable(_) => "i32",
         Type::Named(_) => "ptr",
         Type::Array(_) => "ptr",
         Type::Map(..) => "ptr",
+        Type::Pointer(_) => "ptr",
     }
 }
 
@@ -98,6 +114,8 @@ fn is_class_method(func: &Function, program: &TacProgram) -> bool {
 fn emit_function(out: &mut String, func: &Function, program: &TacProgram) {
     let reg_types: HashMap<Reg, String> = HashMap::new();
     let is_method = is_class_method(func, program);
+
+    let ret_ty = function_ret_type(func);
 
     let mut params = String::new();
     for i in 0..func.params {
@@ -110,9 +128,6 @@ fn emit_function(out: &mut String, func: &Function, program: &TacProgram) {
             params.push_str("i32");
         }
     }
-
-    let needs_double = func.insts.iter().any(inst_has_f64);
-    let ret_ty = if needs_double { "double" } else { "i32" };
 
     out.push_str(&format!("define {} @{}({}) {{\n", ret_ty, func.name, params));
     out.push_str("entry:\n");
@@ -130,8 +145,24 @@ fn emit_function(out: &mut String, func: &Function, program: &TacProgram) {
         cur = emit_insts(out, func, cur, &mut ctx, &ret_ty_str);
     }
 
-    out.push_str(&format!("  ret {} 0\n", ret_ty));
+    let zero = if ret_ty == "double" { "0.0" } else { "0" };
+    out.push_str(&format!("  ret {} {}\n", ret_ty, zero));
     out.push_str("}\n\n");
+}
+
+fn function_ret_type(func: &Function) -> &'static str {
+    use crate::parser::ast::*;
+    match &func.ret_ty {
+        Some(Type::Base(BaseType::F64)) | Some(Type::Base(BaseType::F32)) => "double",
+        Some(Type::Base(BaseType::I64)) | Some(Type::Base(BaseType::U64)) => "i64",
+        Some(Type::Base(BaseType::Char)) => "i8",
+        Some(Type::Base(BaseType::I8)) | Some(Type::Base(BaseType::U8)) => "i8",
+        Some(Type::Base(BaseType::I16)) | Some(Type::Base(BaseType::U16)) => "i16",
+        Some(Type::Base(BaseType::Bool)) => "i1",
+        Some(Type::Base(BaseType::Void)) | None => "void",
+        Some(Type::Named(_)) | Some(Type::Array(_)) | Some(Type::Pointer(_)) => "ptr",
+        _ => "i32",
+    }
 }
 
 struct Ctx<'a> {
@@ -147,31 +178,6 @@ impl<'a> Ctx<'a> {
     fn get(&self, r: Reg) -> &str {
         self.reg_types.get(&r).map(|s| s.as_str()).unwrap_or("i32")
     }
-}
-
-fn inst_has_f64(inst: &TacInst) -> bool {
-    match inst {
-        TacInst::Mov { src, .. }
-        | TacInst::Neg { src, .. }
-        | TacInst::Not { src, .. }
-        | TacInst::Ret(Some(src)) => op_is_f64(src),
-        TacInst::Add { lhs, rhs, .. }
-        | TacInst::Sub { lhs, rhs, .. }
-        | TacInst::Mul { lhs, rhs, .. }
-        | TacInst::Div { lhs, rhs, .. }
-        | TacInst::Mod { lhs, rhs, .. }
-        | TacInst::CmpEq { lhs, rhs, .. }
-        | TacInst::CmpNe { lhs, rhs, .. }
-        | TacInst::CmpLt { lhs, rhs, .. }
-        | TacInst::CmpGt { lhs, rhs, .. }
-        | TacInst::CmpLe { lhs, rhs, .. }
-        | TacInst::CmpGe { lhs, rhs, .. } => op_is_f64(lhs) || op_is_f64(rhs),
-        _ => false,
-    }
-}
-
-fn op_is_f64(op: &Operand) -> bool {
-    matches!(op, Operand::F64(_))
 }
 
 fn emit_insts(
@@ -202,21 +208,32 @@ fn emit_insts(
             }
 
             TacInst::Ret(val) => {
-                let op_ty = match val {
-                    Some(op) => op_ty(op, ctx),
-                    None => "i32".to_string(),
-                };
-                let v = fmt_op(val.as_ref().unwrap_or(&Operand::Imm(0)), ctx);
-                if op_ty != ret_ty {
-                    if ret_ty == "double" {
-                        out.push_str(&format!("  %ret_conv_{} = sitofp i32 {} to double\n", pos, v));
-                        out.push_str(&format!("  ret double %ret_conv_{}\n", pos));
-                    } else {
-                        out.push_str(&format!("  %ret_conv_{} = fptosi double {} to i32\n", pos, v));
-                        out.push_str(&format!("  ret i32 %ret_conv_{}\n", pos));
+                match val {
+                    Some(op) => {
+                        let op_ty_str = op_ty(op, ctx);
+                        let v = fmt_op(op, ctx);
+                        if op_ty_str != ret_ty {
+                            if ret_ty == "double" {
+                                out.push_str(&format!("  %ret_conv_{} = sitofp i32 {} to double\n", pos, v));
+                                out.push_str(&format!("  ret double %ret_conv_{}\n", pos));
+                            } else if ret_ty == "void" {
+                                out.push_str("  ret void\n");
+                            } else {
+                                out.push_str(&format!("  %ret_conv_{} = fptosi double {} to {}\n", pos, v, ret_ty));
+                                out.push_str(&format!("  ret {} %ret_conv_{}\n", ret_ty, pos));
+                            }
+                        } else {
+                            out.push_str(&format!("  ret {} {}\n", ret_ty, v));
+                        }
                     }
-                } else {
-                    out.push_str(&format!("  ret {} {}\n", ret_ty, v));
+                    None => {
+                        if ret_ty == "void" {
+                            out.push_str("  ret void\n");
+                        } else {
+                            let zero = if ret_ty == "double" { "0.0" } else { "0" };
+                            out.push_str(&format!("  ret {} {}\n", ret_ty, zero));
+                        }
+                    }
                 }
                 pos += 1;
                 return pos;
@@ -409,6 +426,13 @@ fn emit_insts(
             }
 
             TacInst::Call { dest, name, args } => {
+                let ret_ty = ctx.program
+                    .and_then(|p| p.extern_funcs.iter().find(|ef| ef.name == *name))
+                    .map(|ef| match &ef.ret_ty {
+                        Some(ty) => llvm_type(ty),
+                        None => "void",
+                    })
+                    .unwrap_or("i32");
                 let mut arg_strs = Vec::new();
                 for a in args {
                     let ty = op_ty(a, ctx);
@@ -416,10 +440,10 @@ fn emit_insts(
                     arg_strs.push(format!("{} {}", ty, v));
                 }
                 if let Some(d) = dest {
-                    ctx.set(*d, "i32");
-                    out.push_str(&format!("  %r{} = call i32 @{}({})\n", d, name, arg_strs.join(", ")));
+                    ctx.set(*d, ret_ty);
+                    out.push_str(&format!("  %r{} = call {} @{}({})\n", d, ret_ty, name, arg_strs.join(", ")));
                 } else {
-                    out.push_str(&format!("  call i32 @{}({})\n", name, arg_strs.join(", ")));
+                    out.push_str(&format!("  call {} @{}({})\n", ret_ty, name, arg_strs.join(", ")));
                 }
                 pos += 1;
             }
@@ -454,6 +478,7 @@ fn op_ty(op: &Operand, ctx: &Ctx) -> String {
         Operand::F64(_) => "double".into(),
         Operand::Not(inner) => op_ty(inner, ctx),
         Operand::Reg(r) => ctx.get(*r).into(),
+        Operand::NullSentinel => "i32".into(),
         _ => "i32".into(),
     }
 }
@@ -475,5 +500,6 @@ fn fmt_op(op: &Operand, ctx: &Ctx) -> String {
         Operand::Bool(b) => (if *b { 1 } else { 0 }).to_string(),
         Operand::Label(l) => format!("%{}", l),
         Operand::Not(inner) => fmt_op(inner, ctx),
+        Operand::NullSentinel => (-1_i64).to_string(),
     }
 }

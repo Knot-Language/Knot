@@ -192,11 +192,10 @@ impl Parser {
             self.parse_import()
         } else if self.is_kw("wrap") {
             self.parse_top_level_wrap()
+        } else if self.is_kw("extern") {
+            self.parse_extern()
         } else if self.is_kw("try") {
-            Stmt::TryCatch {
-                try_block: Block { stmts: vec![] },
-                catches: vec![],
-            }
+            self.parse_try_catch()
         } else {
             self.parse_stmt()
         }
@@ -846,6 +845,61 @@ impl Parser {
         Stmt::Import { path, alias }
     }
 
+    fn parse_extern(&mut self) -> Stmt {
+        self.advance(); // consume 'extern'
+        if self.is_kw("func") {
+            self.parse_extern_func()
+        } else if self.is_kw("class") {
+            self.parse_extern_class()
+        } else {
+            let t = self.peek().clone();
+            self.err_expected("'func' or 'class' after extern", &t);
+            Stmt::ExternFunc { name: "_".into(), params: vec![], ret_ty: None }
+        }
+    }
+
+    fn parse_extern_func(&mut self) -> Stmt {
+        self.advance(); // consume 'func'
+        let name = match self.advance() {
+            Token::Identifier(s) => s.clone(),
+            t => { self.err_expected("function name", &t); "_".into() }
+        };
+        let params = self.parse_params();
+        let ret_ty = if self.is_op("->") {
+            self.advance();
+            Some(self.parse_type())
+        } else {
+            None
+        };
+        self.expect_newline_or_end();
+        Stmt::ExternFunc { name, params, ret_ty }
+    }
+
+    fn parse_extern_class(&mut self) -> Stmt {
+        self.advance(); // consume 'class'
+        let name = match self.advance() {
+            Token::Identifier(s) => s.clone(),
+            t => { self.err_expected("class name", &t); "_".into() }
+        };
+        let mut fields = Vec::new();
+        if self.is_op("{") {
+            self.advance();
+            while !self.is_op("}") && !matches!(self.peek(), Token::Eof) {
+                let fname = match self.advance() {
+                    Token::Identifier(s) => s.clone(),
+                    t => { self.err_expected("field name", &t); "_".into() }
+                };
+                self.expect_operator(":");
+                let fty = self.parse_type();
+                fields.push((fname, fty));
+                self.expect_newline_or_end();
+            }
+            self.expect_operator("}");
+        }
+        self.expect_newline_or_end();
+        Stmt::ExternClass { name, fields }
+    }
+
     // 鈹€鈹€ Helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn parse_ident(&mut self) -> String {
@@ -1003,7 +1057,7 @@ impl Parser {
                 "U64" => Type::Base(BaseType::U64),
                 "F32" => Type::Base(BaseType::F32),
                 "F64" => Type::Base(BaseType::F64),
-                "String" => Type::Base(BaseType::String),
+                "Char" => Type::Base(BaseType::Char),
                 "Bool" => Type::Base(BaseType::Bool),
                 "Null" => Type::Base(BaseType::Null),
                 "Void" => Type::Base(BaseType::Void),
@@ -1032,6 +1086,9 @@ impl Parser {
         if self.is_op("?") {
             self.advance();
             Type::Nullable(Box::new(ty))
+        } else if self.is_op("*") {
+            self.advance();
+            Type::Pointer(Box::new(ty))
         } else {
             ty
         }
@@ -1087,6 +1144,7 @@ impl Parser {
                 self.advance();
                 let field = match self.advance() {
                     Token::Identifier(s) => s.clone(),
+                    Token::Keyword(s) => s.clone(),
                     t => {
                         self.err_expected("field name after '::'", &t);
                         "_".to_string()
@@ -1265,6 +1323,10 @@ impl Parser {
             Token::String(s) => {
                 self.advance();
                 Expr::String(s.clone(), self.current_span())
+            }
+            Token::Char(c) => {
+                self.advance();
+                Expr::Char(c, self.current_span())
             }
             Token::Keyword(ref s) if s == "true" => {
                 self.advance();
@@ -1532,6 +1594,7 @@ fn token_desc(token: &Token) -> String {
     match token {
         Token::Number(n) => format!("number {:?}", n),
         Token::String(s) => format!("\"{}\"", s),
+        Token::Char(c) => format!("character '{}'", *c as char),
         Token::Identifier(s) => format!("identifier '{}'", s),
         Token::Keyword(s) => format!("keyword '{}'", s),
         Token::Operator(s) => format!("'{}'", s),

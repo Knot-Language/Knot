@@ -11,6 +11,9 @@ pub struct Lower {
     temp_funcs: Vec<Function>,
     classes: Vec<ClassIr>,
     enums: Vec<EnumIr>,
+    extern_funcs: Vec<ExternFuncIr>,
+    extern_classes: Vec<ExternClassIr>,
+    source_files: Vec<String>,
     break_labels: Vec<Label>,
     continue_labels: Vec<Label>,
     catch_label: Option<Label>,
@@ -22,6 +25,68 @@ pub struct Lower {
     all_class_members: HashMap<String, Vec<ClassMember>>,
     generic_funcs: HashMap<String, (Stmt, Vec<String>)>,
     monomorphized_funcs: HashMap<String, bool>,
+    enum_variants: HashMap<String, Vec<String>>,
+    last_lambda_name: Option<String>,
+    lambda_bindings: HashMap<String, String>,
+    std_path: Option<String>,
+}
+
+fn resolve_std_path() -> Option<String> {
+    if let Ok(val) = std::env::var("KNOT_STD") {
+        let p = std::path::Path::new(&val);
+        if p.is_dir() {
+            return Some(val);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        for ancestor in exe.ancestors().take(6) {
+            let candidate = ancestor.join("std");
+            if candidate.is_dir() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn translate_op_name(op: &str) -> String {
+    match op {
+        "<<" => "shl".into(),
+        ">>" => "shr".into(),
+        _ => op.replace("<<", "shl").replace(">>", "shr")
+                .replace("==", "eq").replace("!=", "ne")
+                .replace("<=", "le").replace(">=", "ge")
+                .replace("+", "plus").replace("-", "minus")
+                .replace("*", "mul").replace("/", "div")
+                .replace("%", "mod").replace("&", "bitand")
+                .replace("|", "bitor").replace("^", "bitxor")
+                .replace("<", "lt").replace(">", "gt")
+                .replace(" ", "_"),
+    }
+}
+
+fn binop_to_op_str(op: &BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
+        BinOp::Mod => "%",
+        BinOp::Eq => "==",
+        BinOp::Neq => "!=",
+        BinOp::Lt => "<",
+        BinOp::Gt => ">",
+        BinOp::Le => "<=",
+        BinOp::Ge => ">=",
+        BinOp::And => "&&",
+        BinOp::Or => "||",
+        BinOp::Shl => "<<",
+        BinOp::Shr => ">>",
+        BinOp::BitAnd => "&",
+        BinOp::BitOr => "|",
+        BinOp::BitXor => "^",
+        BinOp::Range | BinOp::NullCoalesce => "",
+    }
 }
 
 struct SavedContext {
@@ -39,10 +104,13 @@ impl Lower {
             label_counter: 0,
             vars: HashMap::new(),
             var_types: HashMap::new(),
-            func: Function { name: String::new(), params: 0, insts: Vec::new() },
+            func: Function { name: String::new(), params: 0, insts: Vec::new(), ret_ty: None },
             temp_funcs: Vec::new(),
             classes: Vec::new(),
             enums: Vec::new(),
+            extern_funcs: Vec::new(),
+            extern_classes: Vec::new(),
+            source_files: Vec::new(),
             break_labels: Vec::new(),
             continue_labels: Vec::new(),
             catch_label: None,
@@ -54,6 +122,10 @@ impl Lower {
             all_class_members: HashMap::new(),
             generic_funcs: HashMap::new(),
             monomorphized_funcs: HashMap::new(),
+            enum_variants: HashMap::new(),
+            last_lambda_name: None,
+            lambda_bindings: HashMap::new(),
+            std_path: resolve_std_path(),
         };
 
         // First pass: collect func params and class members
@@ -70,7 +142,10 @@ impl Lower {
             functions: l.temp_funcs,
             classes: l.classes,
             enums: l.enums,
+            extern_funcs: l.extern_funcs,
+            extern_classes: l.extern_classes,
             strings: l.strings,
+            source_files: l.source_files,
         }
     }
 
@@ -84,6 +159,24 @@ impl Lower {
             }
             Stmt::ClassDef { name, members, .. } => {
                 self.all_class_members.insert(name.clone(), members.clone());
+                for m in members {
+                    match m {
+                        ClassMember::New { params, .. } => {
+                            self.func_params.insert(format!("{}__new", name), params.clone());
+                        }
+                        ClassMember::Operator { op, params, .. } => {
+                            let op_name = translate_op_name(op);
+                            self.func_params.insert(format!("{}__op_{}", name, op_name), params.clone());
+                        }
+                        ClassMember::Method { name: mname, params, .. } => {
+                            self.func_params.insert(format!("{}__{}", name, mname), params.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Stmt::EnumDef { name, variants, .. } => {
+                self.enum_variants.insert(name.clone(), variants.clone());
             }
             _ => {}
         }
@@ -170,7 +263,7 @@ impl Lower {
     }
 
     fn save_context(&mut self, fname: &str, nparams: usize) -> SavedContext {
-        let prev_func = std::mem::replace(&mut self.func, Function { name: fname.to_string(), params: nparams, insts: Vec::new() });
+        let prev_func = std::mem::replace(&mut self.func, Function { name: fname.to_string(), params: nparams, insts: Vec::new(), ret_ty: None });
         let prev_vars = std::mem::take(&mut self.vars);
         let prev_var_types = std::mem::take(&mut self.var_types);
         let prev_class = self.current_class.clone();
@@ -179,7 +272,8 @@ impl Lower {
     }
 
     fn restore_context(&mut self, ctx: SavedContext) {
-        let finished = std::mem::replace(&mut self.func, ctx.prev_func);
+        let mut finished = std::mem::replace(&mut self.func, ctx.prev_func);
+        finished.ret_ty = self.current_ret_ty.clone();
         self.temp_funcs.push(finished);
         self.vars = ctx.prev_vars;
         self.var_types = ctx.prev_var_types;
@@ -225,7 +319,7 @@ impl Lower {
                             self.lower_method(&format!("{}_static__{}", name, mname), false, params, ret_ty, body);
                         }
                         ClassMember::Operator { op, params, ret_ty, body, .. } => {
-                            let op_name = op.replace('+', "plus").replace('-', "minus").replace('*', "mul").replace('/', "div").replace('%', "mod").replace("==", "eq").replace("!=", "ne").replace('<', "lt").replace('>', "gt").replace(" ", "_");
+                            let op_name = translate_op_name(&op);
                             self.lower_method(&format!("{}__op_{}", name, op_name), true, params, ret_ty, body);
                         }
                         ClassMember::Wrap { name: wname, params, body } => {
@@ -249,6 +343,13 @@ impl Lower {
             Stmt::Import { path, .. } => {
                 self.lower_import(path);
             }
+            Stmt::ExternFunc { name, params, ret_ty } => {
+                let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone().unwrap_or(Type::Base(BaseType::I32))).collect();
+                self.extern_funcs.push(ExternFuncIr { name: name.clone(), param_tys, ret_ty: ret_ty.clone() });
+            }
+            Stmt::ExternClass { name, fields } => {
+                self.extern_classes.push(ExternClassIr { name: name.clone(), fields: fields.clone() });
+            }
             _ => {}
         }
     }
@@ -258,13 +359,40 @@ impl Lower {
             eprintln!("warning: import path '{}' contains '..', skipping (path traversal blocked)", path);
             return;
         }
-        let canon = match std::fs::canonicalize(path) {
-            Ok(p) => p.to_string_lossy().to_string(),
-            Err(e) => {
-                eprintln!("warning: cannot resolve import '{}': {}", path, e);
-                return;
+        let full_path = if let Some(rest) = path.strip_prefix("std/") {
+            match &self.std_path {
+                Some(std_dir) => format!("{}/{}", std_dir, rest),
+                None => {
+                    eprintln!("warning: std library not found (set KNOT_STD env var) — cannot resolve import '{}'", path);
+                    return;
+                }
+            }
+        } else {
+            path.to_string()
+        };
+        let canon = if full_path.contains('.') || full_path.contains('/') || full_path.contains('\\') {
+            match std::fs::canonicalize(&full_path) {
+                Ok(p) => p.to_string_lossy().to_string(),
+                Err(e) => {
+                    eprintln!("warning: cannot resolve import '{}': {}", full_path, e);
+                    return;
+                }
+            }
+        } else {
+            let file_with_ext = format!("{}.knot", full_path);
+            match std::fs::canonicalize(&file_with_ext) {
+                Ok(p) => p.to_string_lossy().to_string(),
+                Err(_) => {
+                    eprintln!("warning: cannot resolve bare import '{}' (tried '{}.knot')", full_path, full_path);
+                    return;
+                }
             }
         };
+        // Auto-detect companion .c file (same path, .c extension)
+        let c_file = canon.replace(".knot", ".c");
+        if std::path::Path::new(&c_file).exists() && !self.source_files.contains(&c_file) {
+            self.source_files.push(c_file);
+        }
         match std::fs::read_to_string(&canon) {
             Ok(source) => {
                 let mut parser = crate::parser::Parser::new(&source);
@@ -393,38 +521,60 @@ impl Lower {
         self.break_labels.push(end_label.clone());
         self.continue_labels.push(cont_label.clone());
 
-        let (index_reg, max_reg) = match iter {
+        match iter {
             Expr::Binary { op: BinOp::Range, left, right, .. } => {
                 let start = self.lower_expr(left);
                 let end = self.lower_expr(right);
                 let ir = self.new_reg(); self.emit(TacInst::Mov { dest: ir, src: start });
                 let mr = self.new_reg(); self.emit(TacInst::Mov { dest: mr, src: end });
-                (ir, mr)
+                self.lower_for_loop(var, &loop_label, &cont_label, &end_label, ir, mr, body, None);
+            }
+            Expr::Array(items, _) => {
+                let arr = self.new_reg();
+                let count = Operand::Imm(items.len() as i64);
+                self.emit(TacInst::AllocArray { dest: arr, count });
+                for (i, item) in items.iter().enumerate() {
+                    let val = self.lower_expr(item);
+                    let ptr = self.new_reg();
+                    self.emit(TacInst::GetElemPtr { dest: ptr, obj: arr, index: Operand::Imm(i as i64) });
+                    self.emit(TacInst::Store { addr: ptr, src: val });
+                }
+                let ir = self.new_reg(); self.emit(TacInst::Mov { dest: ir, src: Operand::Imm(0) });
+                let mr = self.new_reg(); self.emit(TacInst::Mov { dest: mr, src: Operand::Imm(items.len() as i64) });
+                self.lower_for_loop(var, &loop_label, &cont_label, &end_label, ir, mr, body, Some(arr));
             }
             _ => {
                 let val = self.lower_expr(iter);
                 let ir = self.new_reg(); self.emit(TacInst::Mov { dest: ir, src: Operand::Imm(0) });
                 let mr = self.new_reg(); self.emit(TacInst::Mov { dest: mr, src: val });
-                (ir, mr)
+                self.lower_for_loop(var, &loop_label, &cont_label, &end_label, ir, mr, body, None);
             }
-        };
+        }
+        self.break_labels.pop();
+        self.continue_labels.pop();
+    }
 
+    fn lower_for_loop(&mut self, var: &str, loop_label: &Label, cont_label: &Label, end_label: &Label, index_reg: Reg, max_reg: Reg, body: &Block, arr_reg: Option<Reg>) {
         self.emit(TacInst::Label(loop_label.clone()));
         let cond_reg = self.new_reg();
         self.emit(TacInst::CmpGe { dest: cond_reg, lhs: Operand::Reg(index_reg), rhs: Operand::Reg(max_reg) });
         self.emit(TacInst::JmpIf { cond: Operand::Reg(cond_reg), label: end_label.clone() });
 
         let var_reg = self.new_reg();
+        if let Some(arr) = arr_reg {
+            let elem_ptr = self.new_reg();
+            self.emit(TacInst::GetElemPtr { dest: elem_ptr, obj: arr, index: Operand::Reg(index_reg) });
+            self.emit(TacInst::Load { dest: var_reg, addr: elem_ptr });
+        } else {
+            self.emit(TacInst::Mov { dest: var_reg, src: Operand::Reg(index_reg) });
+        }
         self.vars.insert(var.to_string(), var_reg);
-        self.emit(TacInst::Mov { dest: var_reg, src: Operand::Reg(index_reg) });
         self.lower_block(body);
-        self.emit(TacInst::Label(cont_label));
+        self.emit(TacInst::Label(cont_label.clone()));
         let one = self.new_reg(); self.emit(TacInst::Mov { dest: one, src: Operand::Imm(1) });
         self.emit(TacInst::Add { dest: index_reg, lhs: Operand::Reg(index_reg), rhs: Operand::Reg(one) });
-        self.emit(TacInst::Jmp(loop_label));
-        self.emit(TacInst::Label(end_label));
-        self.break_labels.pop();
-        self.continue_labels.pop();
+        self.emit(TacInst::Jmp(loop_label.clone()));
+        self.emit(TacInst::Label(end_label.clone()));
     }
 
     fn lower_try_catch(&mut self, try_block: &Block, catches: &[CatchClause]) {
@@ -466,13 +616,15 @@ impl Lower {
             Expr::Int(v, _) => Operand::Imm(*v),
             Expr::Float(v, _) => Operand::F64(*v),
             Expr::Bool(b, _) => Operand::Bool(*b),
-            Expr::Null(_) => Operand::Imm(0),
+            Expr::Null(_) => Operand::NullSentinel,
             Expr::String(s, _) => {
                 let name = self.string_constant(s);
                 let r = self.new_reg();
                 self.emit(TacInst::LoadStrConst { dest: r, name });
+                self.var_types.insert(format!("_reg_{}", r), Type::Array(Box::new(Type::Base(BaseType::Char))));
                 Operand::Reg(r)
             }
+            Expr::Char(v, _) => Operand::Imm(*v as i64),
             Expr::Ident(name, _) => {
                 if let Some(&reg) = self.vars.get(name) { Operand::Reg(reg) }
                 else { let r = self.new_reg(); self.vars.insert(name.clone(), r); Operand::Reg(r) }
@@ -609,6 +761,9 @@ impl Lower {
     }
 
     fn lower_binary(&mut self, op: &BinOp, left: &Expr, right: &Expr) -> Operand {
+        if let Some(result) = self.try_operator_call(op, left, right) {
+            return result;
+        }
 
         let lhs = self.lower_expr(left);
         let rhs = self.lower_expr(right);
@@ -665,7 +820,7 @@ impl Lower {
                 let end_label = self.new_label("coalesce_end");
                 self.emit(TacInst::Mov { dest, src: lhs.clone() });
                 let cmp = self.new_reg();
-                self.emit(TacInst::CmpEq { dest: cmp, lhs: lhs.clone(), rhs: Operand::Imm(0) });
+                self.emit(TacInst::CmpEq { dest: cmp, lhs: lhs.clone(), rhs: Operand::NullSentinel });
                 self.emit(TacInst::JmpIf { cond: Operand::Not(Box::new(Operand::Reg(cmp))), label: end_label.clone() });
                 self.emit(TacInst::Mov { dest, src: rhs });
                 self.emit(TacInst::Label(end_label));
@@ -677,6 +832,41 @@ impl Lower {
                 Operand::Reg(dest)
             }
         }
+    }
+
+    fn try_operator_call(&mut self, op: &BinOp, left: &Expr, right: &Expr) -> Option<Operand> {
+        let op_str = binop_to_op_str(op);
+        if op_str.is_empty() { return None; }
+        let class_name = match left {
+            Expr::Ident(name, _) => match self.var_types.get(name)? {
+                Type::Named(cn) => cn.clone(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let op_name = translate_op_name(op_str);
+        let method_name = format!("{}__op_{}", class_name, op_name);
+        self.func_params.get(&method_name)?;
+        let lhs = self.lower_expr(left);
+        let rhs = self.lower_expr(right);
+        let dest = self.new_reg();
+        self.emit(TacInst::Call { dest: Some(dest), name: method_name, args: vec![lhs, rhs] });
+        Some(Operand::Reg(dest))
+    }
+
+    fn constructor_class_name(&self, expr: &Expr) -> Option<String> {
+        if let Expr::Call { callee, .. } = expr {
+            if let Expr::Access { obj, field, .. } = callee.as_ref() {
+                if field == "new" {
+                    if let Expr::Ident(name, _) = obj.as_ref() {
+                        if self.all_class_members.contains_key(name) {
+                            return Some(name.clone());
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn lower_unary(&mut self, op: &UnaryOp, expr: &Expr) -> Operand {
@@ -692,11 +882,19 @@ impl Lower {
 
     fn lower_call(&mut self, callee: &Expr, args: &[Expr]) -> Operand {
         let (name, this_arg) = match callee {
-            Expr::Ident(s, _) => (s.clone(), None),
+            Expr::Ident(s, _) => {
+                let resolved = if let Some(lambda_name) = self.lambda_bindings.get(s) {
+                    lambda_name.clone()
+                } else {
+                    s.clone()
+                };
+                (resolved, None)
+            }
             Expr::Access { obj, field, .. } => {
                 if let Expr::Ident(class_name, _) = obj.as_ref() {
                     let method_name = format!("{}__{}", class_name, field);
-                    (method_name, Some(self.lower_expr(obj)))
+                    let this = if field == "new" { None } else { Some(self.lower_expr(obj)) };
+                    (method_name, this)
                 } else {
                     let method_name = format!("__{}", field);
                     let obj_val = self.lower_expr(obj);
@@ -779,8 +977,19 @@ impl Lower {
     fn lower_assign(&mut self, target: &Expr, value: &Expr) -> Operand {
         let val = self.lower_expr(value);
 
+        if let Expr::Ident(name, _) = target {
+            if let Some(class_name) = self.constructor_class_name(value) {
+                self.var_types.insert(name.clone(), Type::Named(class_name));
+            }
+        }
+
         let (dest_reg, _target_name) = match target {
             Expr::Ident(name, _) => {
+                if matches!(value, Expr::Lambda { .. }) {
+                    if let Some(lambda_name) = self.last_lambda_name.take() {
+                        self.lambda_bindings.insert(name.clone(), lambda_name);
+                    }
+                }
                 let r = if let Some(&r) = self.vars.get(name) { r }
                 else { let r = self.new_reg(); self.vars.insert(name.clone(), r); r };
                 (r, Some(name.clone()))
@@ -816,6 +1025,13 @@ impl Lower {
     }
 
     fn lower_access(&mut self, obj: &Expr, field: &str) -> Operand {
+        if let Expr::Ident(name, _) = obj {
+            if let Some(variants) = self.enum_variants.get(name) {
+                if let Some(idx) = variants.iter().position(|v| v == field) {
+                    return Operand::Imm(idx as i64);
+                }
+            }
+        }
         let class_name = self.current_class.clone().unwrap_or_default();
         match obj {
             Expr::Ident(name, _) if name == "this" => {
@@ -872,6 +1088,7 @@ impl Lower {
     fn lower_lambda(&mut self, params: &[Param], body: &Block) -> Operand {
         let captured = self.collect_captures(body, params);
         let lambda_name = format!("__lambda_{}", self.label_counter);
+        self.last_lambda_name = Some(lambda_name.clone());
         let total_params = params.len() + captured.len();
         let prev = self.save_context(&lambda_name, total_params);
         self.current_ret_ty = None;
@@ -1056,7 +1273,8 @@ fn infer_type_from_args(args: &[Expr], _generics: &[String]) -> Option<Type> {
     match args.first()? {
         Expr::Int(..) => Some(Type::Base(BaseType::I32)),
         Expr::Float(..) => Some(Type::Base(BaseType::F64)),
-        Expr::String(..) => Some(Type::Base(BaseType::String)),
+        Expr::String(..) => Some(Type::Array(Box::new(Type::Base(BaseType::Char)))),
+        Expr::Char(..) => Some(Type::Base(BaseType::Char)),
         Expr::Bool(..) => Some(Type::Base(BaseType::Bool)),
         Expr::Null(_) => Some(Type::Base(BaseType::Null)),
         Expr::Ident(..) => Some(Type::Base(BaseType::I32)),
@@ -1072,6 +1290,7 @@ fn sanitize_type_name(ty: &Type) -> String {
         Type::Named(n) => n.clone(),
         Type::Array(inner) => format!("Array_{}", sanitize_type_name(inner)),
         Type::Map(k, v) => format!("Map_{}_{}", sanitize_type_name(k), sanitize_type_name(v)),
+        Type::Pointer(inner) => format!("Ptr_{}", sanitize_type_name(inner)),
     }
 }
 
@@ -1154,6 +1373,7 @@ fn substitute_type(ty: &mut Type, from: &str, to: &Type) {
             substitute_type(k, from, to);
             substitute_type(v, from, to);
         }
+        Type::Pointer(inner) => substitute_type(inner, from, to),
         _ => {}
     }
 }
