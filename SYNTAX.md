@@ -876,6 +876,7 @@ func main() -> I32 {
 | String | `String` | Immutable UTF-8 |
 | Boolean | `Bool` | `true` / `false` |
 | Null | `Null` | Sole value `null` |
+| Dynamic | `Any` | Dynamically typed value |
 | Void | `Void` | No return value |
 
 ### Compound Types

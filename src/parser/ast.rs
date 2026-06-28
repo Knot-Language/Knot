@@ -272,4 +272,5 @@ pub enum BaseType {
     Bool,
     Null,
     Void,
+    Any,
 }
