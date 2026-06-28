@@ -11,7 +11,7 @@
 - **Minimal Syntax** — Curly-brace blocks, newline as statement terminator, no semicolons
 - **Compile-Time GC** — All memory freed at compile-time determined points, zero runtime pauses
 - **Zero-Cost Abstractions** — mixin, wrap, generics fully inlined at compile time
-- **Static & Dynamic** — Static type inference by default, optional `Any` dynamic type
+- **Static Typing** — Static type inference by default
 
 ## Quick Start
 

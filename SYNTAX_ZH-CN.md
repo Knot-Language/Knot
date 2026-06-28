@@ -883,7 +883,6 @@ func main() -> I32 {
 | 字符串 | `String` | 不可变 UTF-8 |
 | 布尔 | `Bool` | `true` / `false` |
 | 空 | `Null` | 唯一值 `null` |
-| 动态 | `Any` | 动态类型值 |
 | 无返回 | `Void` | 函数无返回值 |
 
 ### 复合类型
