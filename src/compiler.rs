@@ -40,7 +40,14 @@ pub fn compile_file(source_path: &str, output_path: &str, run: bool) {
         diagnostics.print_all();
     }
 
-    let tac = Lower::lower(&program);
+    let mut tac = Lower::lower(&program);
+
+    // Auto-detect companion .c file for the entry source
+    let entry_c = source_path.replace(".knot", ".c");
+    if std::path::Path::new(&entry_c).exists() && !tac.source_files.contains(&entry_c) {
+        tac.source_files.push(entry_c);
+    }
+
     let ll = LlvmBackend::generate(&tac);
 
     let base = output_path
@@ -57,7 +64,7 @@ pub fn compile_file(source_path: &str, output_path: &str, run: bool) {
         std::process::exit(1);
     }
 
-    LlvmBackend::compile_to_exe(&ll_path, output_path);
+    LlvmBackend::compile_to_exe(&ll_path, output_path, &tac.source_files);
     println!("  compiled {}", output_path);
 
     if run {
