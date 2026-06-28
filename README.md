@@ -85,7 +85,8 @@ knot untie [package]            (not yet implemented)
 
 ## Docs
 
-- [Language Syntax](SYNTAX.md)
+- [Tutorial](docs/TUTORIAL.md) — step-by-step guide for beginners
+- [Language Syntax](docs/SYNTAX.md) — complete syntax reference
 - Design document (TBD)
 
 ## Project Structure

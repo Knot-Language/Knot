@@ -85,7 +85,8 @@ knot untie [package]            (尚未实现)
 
 ## 文档
 
-- [语言语法](SYNTAX_ZH-CN.md)
+- [教程](docs/TUTORIAL_ZH-CN.md) — 面向初学者的分步教程
+- [语言语法](docs/SYNTAX_ZH-CN.md) — 完整语法参考
 - 设计文档（待补充）
 
 ## 项目结构

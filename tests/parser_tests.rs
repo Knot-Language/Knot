@@ -151,12 +151,12 @@ fn type_array_of_i32() {
 
 #[test]
 fn type_map_of_string_to_i32() {
-    let stmts = parse("func f(a: Map[String, I32]) {}");
+    let stmts = parse("func f(a: Map[Char, I32]) {}");
     match &stmts[0] {
         Stmt::FuncDef { params, .. } => {
             assert_eq!(
                 params[0].ty,
-                Some(Type::Map(Box::new(Type::Base(BaseType::String)), Box::new(Type::Base(BaseType::I32))))
+                Some(Type::Map(Box::new(Type::Base(BaseType::Char)), Box::new(Type::Base(BaseType::I32))))
             );
         }
         _ => panic!("expected FuncDef"),
@@ -179,7 +179,7 @@ fn type_nullable_array() {
 
 #[test]
 fn all_base_types_parsed() {
-    let stmts = parse("func f(a: I8, b: I16, c: I32, d: I64, e: U8, f: U16, g: U32, h: U64, i: F32, j: F64, k: String, l: Bool, m: Null, n: Void) {}");
+    let stmts = parse("func f(a: I8, b: I16, c: I32, d: I64, e: U8, f: U16, g: U32, h: U64, i: F32, j: F64, k: Char, l: Bool, m: Null, n: Void) {}");
     match &stmts[0] {
         Stmt::FuncDef { params, .. } => {
             assert_eq!(params.len(), 14);
@@ -193,7 +193,7 @@ fn all_base_types_parsed() {
             assert_eq!(params[7].ty, Some(Type::Base(BaseType::U64)));
             assert_eq!(params[8].ty, Some(Type::Base(BaseType::F32)));
             assert_eq!(params[9].ty, Some(Type::Base(BaseType::F64)));
-            assert_eq!(params[10].ty, Some(Type::Base(BaseType::String)));
+            assert_eq!(params[10].ty, Some(Type::Base(BaseType::Char)));
             assert_eq!(params[11].ty, Some(Type::Base(BaseType::Bool)));
             assert_eq!(params[12].ty, Some(Type::Base(BaseType::Null)));
             assert_eq!(params[13].ty, Some(Type::Base(BaseType::Void)));
@@ -706,13 +706,13 @@ fn try_catch_basic() {
 
 #[test]
 fn try_catch_with_type_filter() {
-    let stmts = parse("func f() { try { mightFail() } catch e: String { print(e) } catch e: I32 { print(e) } }");
+    let stmts = parse("func f() { try { mightFail() } catch e: Char { print(e) } catch e: I32 { print(e) } }");
     match &stmts[0] {
         Stmt::FuncDef { body, .. } => match &body.stmts[0] {
             Stmt::TryCatch { catches, .. } => {
                 assert_eq!(catches.len(), 2);
                 assert_eq!(catches[0].var, Some("e".to_string()));
-                assert_eq!(catches[0].ty, Some(Type::Base(BaseType::String)));
+                assert_eq!(catches[0].ty, Some(Type::Base(BaseType::Char)));
                 assert_eq!(catches[1].ty, Some(Type::Base(BaseType::I32)));
             }
             _ => panic!("expected TryCatch"),
@@ -793,7 +793,7 @@ fn class_level_wrap() {
 
 #[test]
 fn function_with_default_params() {
-    let stmts = parse("func greet(name: String = \"world\", times: I32 = 1) {}");
+    let stmts = parse("func greet(name: Char = 'K', times: I32 = 1) {}");
     match &stmts[0] {
         Stmt::FuncDef { params, .. } => {
             assert_eq!(params.len(), 2);

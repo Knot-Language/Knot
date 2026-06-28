@@ -18,7 +18,8 @@
 - [12. Exception Handling](#12-exception-handling)
 - [13. Type Casting](#13-type-casting)
 - [14. Module Imports](#14-module-imports)
-- [15. Type System](#15-type-system)
+- [15. Extern Declarations](#15-extern-declarations)
+- [16. Type System](#16-type-system)
 
 ---
 
@@ -71,7 +72,7 @@ The following are reserved keywords and cannot be used as identifiers:
 ```
 abstract  args     as       as!
 assert    break    catch    class    continue
-delete    else     enum     false    for
+delete    else     enum     extern   false    for
 func      if       import   in       kwargs
 match     mixin    new      null
 operator  private  return   static   throw
@@ -85,6 +86,18 @@ true      try      while    wrap
 ### Boolean
 
 `true` and `false`, of type `Bool`.
+
+### Character
+
+Single-quoted single character, type `Char` (single byte):
+
+```knot
+'a'
+'\n'
+'0'
+```
+
+Single-quoted multiple characters are treated as raw string (no escape processing).
 
 ### Integer
 
@@ -122,7 +135,7 @@ Supports decimal point and scientific notation. Suffix specifies precision:
 
 ### String
 
-Double-quoted strings `"..."` support escape sequences:
+Double-quoted strings `"..."` support escape sequences. String literals are of type `Array[Char]`:
 
 | Escape | Meaning |
 |--------|---------|
@@ -140,12 +153,14 @@ Double-quoted strings `"..."` support escape sequences:
 
 ### Raw String
 
-Single-quoted `'...'` or backtick `` `...` `` strings do NOT process escape sequences — ideal for paths and regex:
+Backtick `` `...` `` strings do NOT process escape sequences �?ideal for paths:
 
 ```knot
-'C:\Users\name\file.txt'
+`C:\Users\name\file.txt`
 `raw \n no escape`
 ```
+
+Single-quoted `'...'` with multiple characters also acts as raw string (single-character `'x'` is a character literal).
 
 ### Null
 
@@ -235,8 +250,8 @@ Once a variable's type is determined, subsequent assignments must match:
 
 ```knot
 a = 10                 // locked to I32
-a = 20                 // ✓ valid
-// a = "hello"         // ❌ type mismatch, compile error
+a = 20                 // �?valid
+// a = "hello"         // �?type mismatch, compile error
 ```
 
 Numeric types have implicit compatibility (I32 can widen to F64, etc.).
@@ -249,9 +264,9 @@ Append `?` to a type name to allow `null`. `T?` values cannot be directly assign
 maybe: I32? = null
 maybe = 42
 
-// value: I32 = maybe     // ❌ compile error
-value = maybe as! I32     // ✓ forced cast
-value = maybe ?? 0        // ✓ null-coalesce
+// value: I32 = maybe     // �?compile error
+value = maybe as! I32     // �?forced cast
+value = maybe ?? 0        // �?null-coalesce
 ```
 
 ---
@@ -268,7 +283,7 @@ func add(a: I32, b: I32) -> I32 {
 }
 
 func nothing() {          // equivalent to -> Void
-    print("side effect")
+    io.print_str("side effect")  // from std/io.knot
 }
 ```
 
@@ -526,7 +541,7 @@ p = Point::new(10, 20)
 
 ### Constructor (new)
 
-`func new` is the constructor. It implicitly returns the class type. Do NOT use `static` or a return type annotation — the compiler will warn:
+`func new` is the constructor. It implicitly returns the class type. Do NOT use `static` or a return type annotation �?the compiler will warn:
 
 ```knot
 class Point {
@@ -634,22 +649,47 @@ class Secret {
 
 ### Operator Overloading
 
-`operator` inside a class defines custom behavior for operators. Supports `+` `-` `*` `/` `%` `==` `!=` `<` `>` etc.:
+`operator` inside a class defines custom behavior for operators. Supports `+` `-` `*` `/` `%` `==` `!=` `<` `>` `<=` `>=` `<<` `>>` `&` `|` `^`:
 
 ```knot
 class Vector {
     x: I32
     y: I32
 
+    func new(x: I32, y: I32) {
+        this.x = x
+        this.y = y
+    }
+
     operator +(other: Vector) -> Vector {
-        return Vector::new(x + other.x, y + other.y)
+        return Vector::new(this.x + other.x, this.y + other.y)
     }
 }
+
+v1 = Vector::new(1, 2)
+v2 = Vector::new(3, 4)
+v3 = v1 + v2          // calls Vector__op_plus(v1, v2)
 ```
+
+`<<` and `>>` can also be overloaded, commonly used for stream-style I/O:
+
+```knot
+class Cout {
+    operator <<(s: I8*) -> Cout {
+        __knot_print_str(s)
+        return this
+    }
+}
+
+cout = Cout::new()
+cout << "hello"        // calls Cout__op_shl(cout, str_ptr)
+```
+
+Note: each class may only define one overload per operator (no type-based overloading).
 
 ### wrap
 
-`wrap` defines a function that can **only be invoked via `@` syntax** — it cannot be called directly. `@` applies to the declaration on the next line; the wrapped entity is automatically injected as the first parameter. Extra arguments are passed via `@name(...)`.
+`wrap` defines a function that can **only be invoked via `@` syntax** �?it cannot be called directly. `@` applies to the declaration on the next line; the wrapped entity is automatically injected as the first parameter. Extra arguments are passed via `@name(...)`.
 
 **Top-level wrap**
 
@@ -680,7 +720,7 @@ func hello() { return "world" }
 // Desugars to: hello = debug(hello)
 ```
 
-**Class-level wrap** — first param is `this`, second is the wrapped entity:
+**Class-level wrap** �?first param is `this`, second is the wrapped entity:
 
 ```knot
 class Range {
@@ -702,11 +742,11 @@ func isValid(mid: I32) -> Bool {
 
 **Key rules**:
 
-- `wrap` cannot be called explicitly — only via `@`
+- `wrap` cannot be called explicitly �?only via `@`
 - `@name` decorates the next declaration, injecting it as the first parameter
 - `@name(args)` passes extra args to subsequent wrap parameters
 - In a class wrap, the first param is `this`, the second is the wrapped entity
-- Compile-time inlined — zero overhead
+- Compile-time inlined �?zero overhead
 ```
 
 ---
@@ -764,7 +804,7 @@ try {
 ```
 
 `throw` stores the exception value in a global register and jumps to the
-nearest catch handler. Nested try/catch blocks are supported — each
+nearest catch handler. Nested try/catch blocks are supported �?each
 `try` saves and restores its own handler label.
 
 ---
@@ -820,7 +860,7 @@ Two path forms are accepted:
 
 When an alias is provided, all top-level definitions from the imported file are accessible
 under the `<alias>.` namespace. Without an alias, imported symbols are merged directly into
-the current scope — they can be used as if they were defined in the importing file.
+the current scope �?they can be used as if they were defined in the importing file.
 
 ```knot
 import "std/io.knot" as io
@@ -832,12 +872,37 @@ import "utils.knot"
 Imports are resolved at **compile time** (no runtime loading):
 
 1. The path is checked for `..` — **path traversal is blocked** for security.
-2. The path is canonicalized (resolves `.` and symlinks).
-3. The target file is read, parsed, and its top-level statements are lowered immediately,
+2. Paths starting with `std/` resolve to the standard library directory, specified via
+   the `KNOT_STD` environment variable, or auto-detected from the compiler executable location.
+3. The path is canonicalized (resolves `.` and symlinks).
+4. The target file is read, parsed, and its top-level statements are lowered immediately,
    inlined into the current compilation unit.
-4. If the file cannot be read, a **warning** is emitted (non-fatal), and compilation continues.
+5. If the file cannot be read, a **warning** is emitted (non-fatal), and compilation continues.
 
 Imported files may themselves contain `import` statements, forming a dependency graph.
+
+### Standard Library
+
+Knot ships with a standard library `std/`, distributed alongside the compiler. Currently provides `std/io.knot`:
+
+```knot
+import "std/io.knot" as io
+
+func main() -> I32 {
+    cout = io.Cout::new()
+    cout << "hello from Knot\n"   // stream-style output (via operator <<)
+    io.write_i32(42)              // output an integer
+    x = io.read_i32()             // read an integer from stdin
+    return 0
+}
+```
+
+Set the `KNOT_STD` environment variable to point to the std directory before use:
+
+```bash
+set KNOT_STD=D:\dev\knot\std       # Windows
+export KNOT_STD=/path/to/knot/std  # Linux/macOS
+```
 
 ### Project Configuration
 
@@ -864,25 +929,81 @@ func main() -> I32 {
 
 ---
 
-## 15. Type System
+## 15. Extern Declarations
+
+The `extern` keyword declares functions and classes implemented in C.
+
+Knot only supplies the signature; the implementation lives in a same-named `.c` file. The build system auto-detects and links it.
+
+### Extern Functions
+
+```knot
+extern func puts(s: I8*) -> I32
+extern func strlen(s: I8*) -> I64
+extern func sin(x: F64) -> F64
+```
+
+- `extern func` declares a function signature — **no body**
+- The C side uses types defined in `knot.h`
+- Emits LLVM `declare`, linked with the compiled C object at link time
+
+### Extern Classes
+
+Extern classes declare fields on the Knot side; the actual struct is defined in C.
+Knot code obtains/passes references to these objects via extern functions — **never instantiates them directly**:
+
+```knot
+extern class File {
+    fd: I32
+}
+extern func fopen(path: I8*, mode: I8*) -> File
+extern func fclose(f: File) -> I32
+```
+
+C side (`knot.h`):
+
+```c
+typedef struct { knot_i32 fd; } File;
+```
+
+### knot.h
+
+The compiler ships `knot.h` with C type mappings:
+
+| Knot type | C type |
+|-----------|--------|
+| `I8`–`I64` | `int8_t`–`int64_t` |
+| `U8`–`U64` | `uint8_t`–`uint64_t` |
+| `F32` / `F64` | `float` / `double` |
+| `Char` | `char` |
+| `Bool` | `int32_t` |
+| `I8*` / `T*` | `const char*` / pointer |
+| `Array[Char]` | `const char*` |
+| Extern class | pointer (to same-named struct) |
+
+Include `"knot.h"` in your C implementation files.
+
+---
+
+## 16. Type System
 
 ### Primitive Types
 
 | Category | Types | Notes |
 |----------|-------|-------|
-| Signed int | `I8` `I16` `I32` `I64` | Default integer literal → I32 |
+| Signed int | `I8` `I16` `I32` `I64` | Default integer literal �?I32 |
 | Unsigned int | `U8` `U16` `U32` `U64` | |
-| Float | `F32` `F64` | Default float literal → F64 |
-| String | `String` | Immutable UTF-8 |
+| Float | `F32` `F64` | Default float literal �?F64 |
+| Character | `Char` | Single byte |
 | Boolean | `Bool` | `true` / `false` |
 | Null | `Null` | Sole value `null` |
-| Dynamic | `Any` | Dynamically typed value |
 | Void | `Void` | No return value |
 
 ### Compound Types
 
 | Type | Syntax | Notes |
 |------|--------|-------|
+| Pointer | `T*` | Pointer to T, for C interop |
 | Nullable | `T?` | May be `null` |
 | Array | `Array[T]` | Dynamic length |
 | Dict | `Map[K, V]` | Key-value pairs |
@@ -890,10 +1011,10 @@ func main() -> I32 {
 
 ### Type Inference Rules
 
-- `42` → `I32`
-- `3.14` → `F64`
-- `"hello"` → `String`
-- `true` / `false` → `Bool`
-- `null` → `Null`
-- Array `[1, 2, 3]` → `Array[I32]`
+- `42` �?`I32`
+- `3.14` �?`F64`
+- `"hello"` �?`String`
+- `true` / `false` �?`Bool`
+- `null` �?`Null`
+- Array `[1, 2, 3]` �?`Array[I32]`
 - Binary operation: result type is the wider of the two operands

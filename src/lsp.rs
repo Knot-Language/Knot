@@ -128,7 +128,7 @@ fn handle_message(body: &str) -> Option<String> {
                     {"label": "I32", "kind": 6, "detail": "32-bit signed integer"},
                     {"label": "I64", "kind": 6, "detail": "64-bit signed integer"},
                     {"label": "F64", "kind": 6, "detail": "64-bit float"},
-                    {"label": "String", "kind": 6, "detail": "string type"},
+                    {"label": "Char", "kind": 6, "detail": "character type"},
                     {"label": "Bool", "kind": 6, "detail": "boolean type"},
                     {"label": "Void", "kind": 6, "detail": "void type"}
                 ]

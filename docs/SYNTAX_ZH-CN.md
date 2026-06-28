@@ -18,7 +18,8 @@
 - [12. 异常处理](#12-异常处理)
 - [13. 类型转换](#13-类型转换)
 - [14. 模块导入](#14-模块导入)
-- [15. 类型系统](#15-类型系统)
+- [15. 外部声明](#15-外部声明)
+- [16. 类型系统](#16-类型系统)
 
 ---
 
@@ -84,7 +85,7 @@ Knot 采用以下命名约定（编译器不强制，但强烈推荐）：
 ```
 abstract  args     as       as!
 assert    break    catch    class    continue
-delete    else     enum     false    for
+delete    else     enum     extern   false    for
 func      if       import   in       kwargs
 match     mixin    new      null
 operator  private  return   static   throw
@@ -98,6 +99,18 @@ true      try      while    wrap
 ### 布尔
 
 `true` 和 `false`，类型为 `Bool`。
+
+### 字符
+
+单引号包裹单字符，类型为 `Char`（单字节）：
+
+```knot
+'a'
+'\n'
+'0'
+```
+
+单引号包裹多字符时作为原始字符串（不处理转义）。
 
 ### 整数
 
@@ -137,7 +150,7 @@ true      try      while    wrap
 
 ### 字符串
 
-双引号字符串 `"..."` 支持以下转义序列：
+双引号字符串 `"..."` 支持转义序列。字符串字面量类型为 `Array[Char]`：
 
 | 转义 | 含义 |
 |------|------|
@@ -155,12 +168,14 @@ true      try      while    wrap
 
 ### 原始字符串
 
-单引号 `'...'` 或反引号 `` `...` `` 中的字符不处理转义，适合写路径和正则：
+反引号 `` `...` `` 中的字符不处理转义，适合写路径：
 
 ```knot
-'C:\Users\name\file.txt'
+`C:\Users\name\file.txt`
 `raw \n no escape`
 ```
+
+单引号 `'...'` 多字符同样作为原始字符串（单字符 `'x'` 为字符字面量）。
 
 ### 空值
 
@@ -283,7 +298,7 @@ func add(a: I32, b: I32) -> I32 {
 }
 
 func nothing() {          // 等价于 -> Void
-    print("side effect")
+    io.print_str("side effect")  // 来自 std/io.knot
 }
 ```
 
@@ -647,18 +662,43 @@ class Secret {
 
 ### 操作符重载
 
-`operator` 关键字在类内定义操作符行为。支持 `+` `-` `*` `/` `%` `==` `!=` `<` `>` 等：
+`operator` 关键字在类内定义操作符行为。支持 `+` `-` `*` `/` `%` `==` `!=` `<` `>` `<=` `>=` `<<` `>>` `&` `|` `^` 等：
 
 ```knot
 class Vector {
     x: I32
     y: I32
 
+    func new(x: I32, y: I32) {
+        this.x = x
+        this.y = y
+    }
+
     operator +(other: Vector) -> Vector {
-        return Vector::new(x + other.x, y + other.y)
+        return Vector::new(this.x + other.x, this.y + other.y)
     }
 }
+
+v1 = Vector::new(1, 2)
+v2 = Vector::new(3, 4)
+v3 = v1 + v2          // 调用 Vector__op_plus(v1, v2)
 ```
+
+`<<` 和 `>>` 也可重载，常用于流式 I/O：
+
+```knot
+class Cout {
+    operator <<(s: I8*) -> Cout {
+        __knot_print_str(s)
+        return this
+    }
+}
+
+cout = Cout::new()
+cout << "hello"        // 调用 Cout__op_shl(cout, str_ptr)
+```
+
+注意：每个 class 对同一运算符只能定义一个重载（不支持按参数类型重载）。
 
 ### wrap
 
@@ -840,11 +880,36 @@ import "utils.knot"
 导入在**编译时**解析（非运行时加载）：
 
 1. 检测路径中是否包含 `..` — **禁止路径穿越**以确保安全。
-2. 对路径进行规范化（解析 `.` 和符号链接）。
-3. 读取、解析目标文件，并立即将其顶层语句降级，内联到当前编译单元中。
-4. 如果文件无法读取，会发出**警告**（非致命错误），编译继续进行。
+2. 以 `std/` 开头的路径，解析到标准库目录。通过环境变量 `KNOT_STD` 指定，
+   或自动从编译器可执行文件所在目录向上查找 `std/` 目录。
+3. 对路径进行规范化（解析 `.` 和符号链接）。
+4. 读取、解析目标文件，并立即将其顶层语句降级，内联到当前编译单元中。
+5. 如果文件无法读取，会发出**警告**（非致命错误），编译继续进行。
 
 导入的文件自身也可以包含 `import` 语句，形成依赖图。
+
+### 标准库
+
+Knot 附带标准库 `std/`，随编译器一起发布。当前提供 `std/io.knot`：
+
+```knot
+import "std/io.knot" as io
+
+func main() -> I32 {
+    cout = io.Cout::new()
+    cout << "hello from Knot\n"   // 流式输出（operator <<）
+    io.write_i32(42)              // 输出整数
+    x = io.read_i32()             // 读取整数
+    return 0
+}
+```
+
+使用前确保 `KNOT_STD` 指向 std 目录：
+
+```bash
+set KNOT_STD=D:\dev\knot\std       # Windows
+export KNOT_STD=/path/to/knot/std  # Linux/macOS
+```
 
 ### 项目配置
 
@@ -871,7 +936,63 @@ func main() -> I32 {
 
 ---
 
-## 15. 类型系统
+---
+## 15. 外部声明
+
+`extern` 关键字用于声明由 C 语言实现的外部函数和外部类。
+
+Knot 侧只写签名，实现写在同名的 `.c` 文件里。构建时编译器自动检测并一同编译链接。
+
+### 外部函数
+
+```knot
+extern func puts(s: I8*) -> I32
+extern func strlen(s: I8*) -> I64
+extern func sin(x: F64) -> F64
+```
+
+- `extern func` 声明函数签名（参数类型与返回类型），**没有函数体**
+- C 侧用 `knot.h` 定义的类型编写实现
+- LLVM 生成 `declare` 指令，链接时与 C 编译产物合在一起
+
+### 外部类
+
+外部类在 Knot 侧声明字段，C 侧定义实际结构体。Knot 代码通过外部函数获得/传递
+这些对象的引用，**不直接实例化**：
+
+```knot
+extern class File {
+    fd: I32
+}
+extern func fopen(path: I8*, mode: I8*) -> File
+extern func fclose(f: File) -> I32
+```
+
+C 侧 (`knot.h`) 定义：
+
+```c
+typedef struct { knot_i32 fd; } File;
+```
+
+### knot.h
+
+编译器提供 `knot.h` 头文件，包含 Knot 基础类型到 C 的映射：
+
+| Knot 类型 | C 类型 |
+|-----------|--------|
+| `I8`~`I64` | `int8_t`~`int64_t` |
+| `U8`~`U64` | `uint8_t`~`uint64_t` |
+| `F32` / `F64` | `float` / `double` |
+| `Char` | `char` |
+| `Bool` | `int32_t` |
+| `I8*` / `T*` | `const char*` / 指针 |
+| `Array[Char]` | `const char*` |
+| 外部类 | 指针（指向同名结构体）|
+
+编写 C 实现时引入 `#include "knot.h"` 即可使用对应的 C 类型。
+
+---
+## 16. 类型系统
 
 ### 基础类型
 
@@ -880,16 +1001,16 @@ func main() -> I32 {
 | 有符号整数 | `I8` `I16` `I32` `I64` | 默认整数字面量 → `I32` |
 | 无符号整数 | `U8` `U16` `U32` `U64` | |
 | 浮点 | `F32` `F64` | 默认浮点字面量 → `F64` |
-| 字符串 | `String` | 不可变 UTF-8 |
+| 字符 | `Char` | 单字节 |
 | 布尔 | `Bool` | `true` / `false` |
 | 空 | `Null` | 唯一值 `null` |
-| 动态 | `Any` | 动态类型值 |
 | 无返回 | `Void` | 函数无返回值 |
 
 ### 复合类型
 
 | 类型 | 语法 | 说明 |
 |------|------|------|
+| 指针 | `T*` | 指向 T 的指针，用于 C 互操作 |
 | 可空 | `T?` | 可为 `null` |
 | 数组 | `Array[T]` | 动态长度 |
 | 字典 | `Map[K, V]` | 键值对 |
