@@ -259,7 +259,7 @@ impl Lexer {
 
         let keywords = [
             "abstract", "args", "as", "as!", "assert", "break", "catch", "class",
-            "continue", "else", "enum", "false", "for", "func", "if", "import",
+            "continue", "else", "enum", "extern", "false", "for", "func", "if", "import",
             "in", "kwargs", "match", "mixin", "null", "operator", "private",
             "return", "static", "throw", "true", "try", "while", "wrap",
             "new", "delete",
@@ -295,6 +295,36 @@ impl Lexer {
             } else {
                 s.push(self.advance().unwrap());
             }
+        }
+        Token::Error("unterminated string literal".to_string())
+    }
+
+    fn read_char_or_raw(&mut self) -> Token {
+        self.advance(); // consume opening '
+        let first = match self.peek() {
+            Some('\'') => {
+                self.advance();
+                return Token::Error("empty character literal".to_string());
+            }
+            None => return Token::Error("unterminated character literal".to_string()),
+            Some(c) => {
+                self.advance();
+                c
+            }
+        };
+        if self.peek() == Some('\'') {
+            self.advance();
+            return Token::Char(first as u8);
+        }
+        // multi-char ⇀ raw string
+        let mut s = String::new();
+        s.push(first);
+        while let Some(c) = self.peek() {
+            if c == '\'' {
+                self.advance();
+                return Token::String(s);
+            }
+            s.push(self.advance().unwrap());
         }
         Token::Error("unterminated string literal".to_string())
     }
@@ -460,7 +490,7 @@ impl Lexer {
             Some(c) if c.is_ascii_digit() => self.read_number(),
             Some(c) if c.is_alphabetic() || c == '_' => self.read_ident_or_keyword(),
             Some('"') => self.read_string(),
-            Some('\'') => self.read_raw_string('\''),
+            Some('\'') => self.read_char_or_raw(),
             Some('`') => self.read_raw_string('`'),
             Some(_) => self.read_operator(),
         };

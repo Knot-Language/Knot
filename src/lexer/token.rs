@@ -4,6 +4,7 @@ use crate::lexer::num::Num;
 pub enum Token {
     Number(Num),
     String(String),
+    Char(u8),
     Identifier(String),
     Keyword(String),
     Operator(String),
