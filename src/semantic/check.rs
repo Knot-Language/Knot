@@ -1,17 +1,20 @@
 use crate::parser::ast::*;
 use crate::parser::symbol::SymbolTable;
 use crate::error::Span;
+use std::collections::HashMap;
 
 pub fn analyze_expr(
     expr: &Expr,
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
     let _span = expr_span(expr);
     match expr {
         Expr::Int(..) => Some(Type::Base(BaseType::I32)),
         Expr::Float(..) => Some(Type::Base(BaseType::F64)),
-        Expr::String(..) => Some(Type::Base(BaseType::String)),
+        Expr::String(..) => Some(Type::Array(Box::new(Type::Base(BaseType::Char)))),
+        Expr::Char(..) => Some(Type::Base(BaseType::Char)),
         Expr::Bool(..) => Some(Type::Base(BaseType::Bool)),
         Expr::Null(_) => Some(Type::Base(BaseType::Null)),
         Expr::Ident(name, s) => match symbols.lookup(name) {
@@ -21,23 +24,23 @@ pub fn analyze_expr(
                 None
             }
         },
-        Expr::Binary { op, left, right, span: s } => check_binary(op, left, right, symbols, errors, *s),
+        Expr::Binary { op, left, right, span: s } => check_binary(op, left, right, symbols, errors, *s, class_members),
         Expr::Unary { op, expr, span: s } => check_unary(op, expr, symbols, errors, *s),
-        Expr::Call { callee, args, span: s } => check_call(callee, args, symbols, errors, *s),
-        Expr::Index { obj, index, span: s } => check_index(obj, index, symbols, errors, *s),
-        Expr::Access { obj, field, span: s } => check_access(obj, field, symbols, errors, *s),
-        Expr::Assign { target, value, span: s } => check_assign(target, value, symbols, errors, *s),
-        Expr::IfExpr { cond, then_block, else_block, span: s } => check_if_expr(cond, then_block, else_block, symbols, errors, *s),
-        Expr::Array(elems, _s) => check_array(elems, symbols, errors),
-        Expr::Dict(entries, _s) => check_dict(entries, symbols, errors),
+        Expr::Call { callee, args, span: s } => check_call(callee, args, symbols, errors, *s, class_members),
+        Expr::Index { obj, index, span: s } => check_index(obj, index, symbols, errors, *s, class_members),
+        Expr::Access { obj, field, span: s } => check_access(obj, field, symbols, errors, *s, class_members),
+        Expr::Assign { target, value, span: s } => check_assign(target, value, symbols, errors, *s, class_members),
+        Expr::IfExpr { cond, then_block, else_block, span: s } => check_if_expr(cond, then_block, else_block, symbols, errors, *s, class_members),
+        Expr::Array(elems, _s) => check_array(elems, symbols, errors, class_members),
+        Expr::Dict(entries, _s) => check_dict(entries, symbols, errors, class_members),
         Expr::Cast { expr: e, ty, forced: _, span: _s } => {
-            analyze_expr(e, symbols, errors);
+            analyze_expr(e, symbols, errors, class_members);
             Some(ty.clone())
         }
-        Expr::Lambda { params, body, span: _s } => check_lambda(params, body, symbols, errors),
-        Expr::MatchExpr { expr: e, branches, span: _s } => check_match_expr(e, branches, symbols, errors),
+        Expr::Lambda { params, body, span: _s } => check_lambda(params, body, symbols, errors, class_members),
+        Expr::MatchExpr { expr: e, branches, span: _s } => check_match_expr(e, branches, symbols, errors, class_members),
         Expr::PostfixOp { op: _, target, span: _s } => {
-            analyze_expr(target, symbols, errors)
+            analyze_expr(target, symbols, errors, class_members)
         }
     }
 }
@@ -47,6 +50,7 @@ pub fn expr_span(expr: &Expr) -> Span {
         Expr::Int(_, s) => *s,
         Expr::Float(_, s) => *s,
         Expr::String(_, s) => *s,
+        Expr::Char(_, s) => *s,
         Expr::Bool(_, s) => *s,
         Expr::Null(s) => *s,
         Expr::Ident(_, s) => *s,
@@ -73,9 +77,32 @@ fn check_binary(
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
     _span: Span,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
-    let lt = analyze_expr(left, symbols, errors);
-    let rt = analyze_expr(right, symbols, errors);
+    let lt = analyze_expr(left, symbols, errors, class_members);
+    let rt = analyze_expr(right, symbols, errors, class_members);
+
+    let op_str = match op {
+        BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*", BinOp::Div => "/",
+        BinOp::Mod => "%", BinOp::Eq => "==", BinOp::Neq => "!=", BinOp::Lt => "<",
+        BinOp::Gt => ">", BinOp::Le => "<=", BinOp::Ge => ">=", BinOp::Shl => "<<",
+        BinOp::Shr => ">>", BinOp::BitAnd => "&", BinOp::BitOr => "|", BinOp::BitXor => "^",
+        _ => "",
+    };
+
+    if !op_str.is_empty() {
+        if let Some(Type::Named(ref cn)) = lt {
+            if let Some(members) = class_members.get(cn) {
+                for m in members {
+                    if let ClassMember::Operator { op: o, ret_ty, .. } = m {
+                        if o == op_str {
+                            return ret_ty.clone();
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     match (lt, rt) {
         (Some(l), Some(r)) => match op {
@@ -130,7 +157,7 @@ fn check_unary(
     errors: &mut Vec<(String, Span)>,
     span: Span,
 ) -> Option<Type> {
-    let ty = analyze_expr(expr, symbols, errors);
+    let ty = analyze_expr(expr, symbols, errors, &HashMap::new());
     match op {
         UnaryOp::Neg => {
             if let Some(ref t) = ty {
@@ -165,6 +192,7 @@ fn check_call(
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
     _span: Span,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
     let name = match callee {
         Expr::Ident(s, _) => Some(s.clone()),
@@ -178,9 +206,14 @@ fn check_call(
         _ => None,
     };
     for arg in args {
-        analyze_expr(arg, symbols, errors);
+        analyze_expr(arg, symbols, errors, class_members);
     }
     if let Some(n) = name {
+        if let Some(class_name) = n.strip_suffix("__new") {
+            if class_members.contains_key(class_name) {
+                return Some(Type::Named(class_name.to_string()));
+            }
+        }
         let fn_ty = symbols.lookup(&n).and_then(|info| info.ty.clone());
         if fn_ty.is_some() {
             return fn_ty;
@@ -195,9 +228,10 @@ fn check_index(
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
     _span: Span,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
-    let obj_ty = analyze_expr(obj, symbols, errors);
-    let idx_ty = analyze_expr(index, symbols, errors);
+    let obj_ty = analyze_expr(obj, symbols, errors, class_members);
+    let idx_ty = analyze_expr(index, symbols, errors, class_members);
     if let Some(ref t) = idx_ty {
         if !is_integer(t) {
             errors.push((format!("index must be integer, got {:?}", t), expr_span(index)));
@@ -216,8 +250,9 @@ fn check_access(
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
     _span: Span,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
-    analyze_expr(obj, symbols, errors);
+    analyze_expr(obj, symbols, errors, class_members);
     match obj {
         Expr::Ident(class_name, _) => {
             let member_key = format!("{}__{}", class_name, field);
@@ -241,8 +276,9 @@ fn check_assign(
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
     span: Span,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
-    let val_ty = analyze_expr(value, symbols, errors);
+    let val_ty = analyze_expr(value, symbols, errors, class_members);
     match target {
         Expr::Ident(name, s) => {
             let symbol = symbols.lookup(name).cloned();
@@ -277,8 +313,9 @@ fn check_if_expr(
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
     span: Span,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
-    let cond_ty = analyze_expr(cond, symbols, errors);
+    let cond_ty = analyze_expr(cond, symbols, errors, class_members);
     if let Some(ty) = &cond_ty {
         if !matches!(ty, Type::Base(BaseType::Bool)) {
             errors.push((format!("if condition must be Bool, got {:?}", ty), span));
@@ -288,7 +325,7 @@ fn check_if_expr(
     let then_ty = {
         let mut last = None;
         for stmt in &then_block.stmts {
-            last = analyze_expr_stmt(stmt, symbols, errors);
+            last = analyze_expr_stmt(stmt, symbols, errors, class_members);
         }
         last
     };
@@ -299,7 +336,7 @@ fn check_if_expr(
         let else_ty = {
             let mut last = None;
             for stmt in &else_blk.stmts {
-                last = analyze_expr_stmt(stmt, symbols, errors);
+                last = analyze_expr_stmt(stmt, symbols, errors, class_members);
             }
             last
         };
@@ -314,15 +351,16 @@ fn analyze_expr_stmt(
     stmt: &Stmt,
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
     match stmt {
-        Stmt::Expr(e) => analyze_expr(e, symbols, errors),
-        Stmt::Return(Some(e)) => analyze_expr(e, symbols, errors),
+        Stmt::Expr(e) => analyze_expr(e, symbols, errors, class_members),
+        Stmt::Return(Some(e)) => analyze_expr(e, symbols, errors, class_members),
         Stmt::Block(b) => {
             symbols.push_scope();
             let mut last = None;
             for s in &b.stmts {
-                last = analyze_expr_stmt(s, symbols, errors);
+                last = analyze_expr_stmt(s, symbols, errors, class_members);
             }
             symbols.pop_scope();
             last
@@ -337,10 +375,11 @@ fn check_array(
     elems: &[Expr],
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
     let mut elem_ty = None;
     for e in elems {
-        let ty = analyze_expr(e, symbols, errors);
+        let ty = analyze_expr(e, symbols, errors, class_members);
         if elem_ty.is_none() {
             elem_ty = ty;
         }
@@ -352,12 +391,13 @@ fn check_dict(
     entries: &[(Expr, Expr)],
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
     let mut key_ty = None;
     let mut val_ty = None;
     for (k, v) in entries {
-        let kt = analyze_expr(k, symbols, errors);
-        let vt = analyze_expr(v, symbols, errors);
+        let kt = analyze_expr(k, symbols, errors, class_members);
+        let vt = analyze_expr(v, symbols, errors, class_members);
         if key_ty.is_none() { key_ty = kt; }
         if val_ty.is_none() { val_ty = vt; }
     }
@@ -372,6 +412,7 @@ fn check_lambda(
     body: &Block,
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
     symbols.push_scope();
     for p in params {
@@ -381,7 +422,7 @@ fn check_lambda(
     let _body_ty = {
         let mut last = None;
         for stmt in &body.stmts {
-            last = analyze_expr_stmt(stmt, symbols, errors);
+            last = analyze_expr_stmt(stmt, symbols, errors, class_members);
         }
         last
     };
@@ -394,15 +435,16 @@ fn check_match_expr(
     branches: &[MatchBranch],
     symbols: &mut SymbolTable,
     errors: &mut Vec<(String, Span)>,
+    class_members: &HashMap<String, Vec<ClassMember>>,
 ) -> Option<Type> {
-    analyze_expr(expr, symbols, errors);
+    analyze_expr(expr, symbols, errors, class_members);
     let mut result_ty = None;
     for branch in branches {
         symbols.push_scope();
-        analyze_expr(&branch.pattern, symbols, errors);
+        analyze_expr(&branch.pattern, symbols, errors, class_members);
         let mut last = None;
         for stmt in &branch.body.stmts {
-            last = analyze_expr_stmt(stmt, symbols, errors);
+            last = analyze_expr_stmt(stmt, symbols, errors, class_members);
         }
         symbols.pop_scope();
         if result_ty.is_none() { result_ty = last; }
@@ -448,6 +490,9 @@ pub fn types_compatible(expected: &Type, actual: &Type) -> bool {
     }
     if is_numeric(expected) && is_numeric(actual) {
         return true;
+    }
+    if let (Type::Pointer(inner_e), Type::Pointer(inner_a)) = (expected, actual) {
+        return types_compatible(inner_e, inner_a);
     }
     matches!(
         (expected, actual),

@@ -145,6 +145,18 @@ impl SemanticAnalyzer {
                 None
             }
             Stmt::WrapDef { .. } => None,
+            Stmt::ExternFunc { name, params, ret_ty } => {
+                for p in params {
+                    self.symbols.declare(p.name.clone(), p.ty.clone());
+                }
+                let fn_ty = ret_ty.clone().unwrap_or(Type::Base(BaseType::Void));
+                self.symbols.declare(name.clone(), Some(fn_ty));
+                None
+            }
+            Stmt::ExternClass { name, .. } => {
+                self.symbols.declare(name.clone(), Some(Type::Named(name.clone())));
+                None
+            }
         }
     }
 
@@ -312,7 +324,7 @@ impl SemanticAnalyzer {
     // ── Expressions (delegated to check.rs) ──────────────
 
     fn analyze_expr(&mut self, expr: &Expr) -> Option<Type> {
-        check::analyze_expr(expr, &mut self.symbols, &mut self.errors)
+        check::analyze_expr(expr, &mut self.symbols, &mut self.errors, &self.class_members)
     }
 }
 
