@@ -217,3 +217,34 @@ fn assert_produces_ir() {
     assert!(ll.contains("@main("));
     assert!(ll.contains("@knot_exception"));
 }
+
+#[test]
+fn extern_func_emits_declare() {
+    let ll = compile_success("
+        extern func puts(s: Array[Char]) -> I32
+        func main() -> I32 {
+            return 0
+        }
+    ");
+    assert!(ll.contains("declare i32 @puts(ptr)"), "expected declare for puts, got:\n{}", ll);
+}
+
+#[test]
+fn extern_class_parsed() {
+    let ll = compile_success("
+        extern class File { fd: I32 }
+        extern func fopen(path: Array[Char], mode: Array[Char]) -> Array[Char]
+        func main() -> I32 {
+            return 0
+        }
+    ");
+    assert!(ll.contains("declare ptr @fopen(ptr, ptr)"), "expected declare for fopen, got:\n{}", ll);
+}
+
+#[test]
+fn operator_overload_dispatches() {
+    let ll = compile_success(
+        "class Box {\n    val: I32\n    func new(v: I32) { this.val = v }\n    operator +(other: Box) -> I32 { return this.val + other.val }\n}\nfunc main() -> I32 {\n    a = Box::new(10)\n    b = Box::new(20)\n    return a + b\n}",
+    );
+    assert!(ll.contains("@Box__op_plus("), "expected Box__op_plus, got:\n{}", ll);
+}

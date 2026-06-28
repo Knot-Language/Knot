@@ -2,10 +2,11 @@ use knot::error::Span;
 use knot::parser::ast::*;
 use knot::parser::symbol::SymbolTable;
 use knot::semantic::check;
+use std::collections::HashMap;
 
 fn check_expr(expr: &Expr, symbols: &mut SymbolTable) -> Option<Type> {
     let mut errors = Vec::new();
-    check::analyze_expr(expr, symbols, &mut errors)
+    check::analyze_expr(expr, symbols, &mut errors, &HashMap::new())
 }
 
 #[test]
@@ -13,7 +14,7 @@ fn literal_types() {
     let mut sym = SymbolTable::new();
     assert_eq!(check_expr(&Expr::Int(42, Span::new(1, 1)), &mut sym), Some(Type::Base(BaseType::I32)));
     assert_eq!(check_expr(&Expr::Float(3.14, Span::new(1, 1)), &mut sym), Some(Type::Base(BaseType::F64)));
-    assert_eq!(check_expr(&Expr::String("hello".into(), Span::new(1, 1)), &mut sym), Some(Type::Base(BaseType::String)));
+    assert_eq!(check_expr(&Expr::String("hello".into(), Span::new(1, 1)), &mut sym), Some(Type::Array(Box::new(Type::Base(BaseType::Char)))));
     assert_eq!(check_expr(&Expr::Bool(true, Span::new(1, 1)), &mut sym), Some(Type::Base(BaseType::Bool)));
     assert_eq!(check_expr(&Expr::Null(Span::new(1, 1)), &mut sym), Some(Type::Base(BaseType::Null)));
 }
@@ -42,7 +43,7 @@ fn dict_infers_key_value_types() {
         (Expr::String("k".into(), Span::new(1, 1)), Expr::Int(1, Span::new(1, 1))),
     ], Span::new(1, 1));
     assert_eq!(check_expr(&dict, &mut sym), Some(Type::Map(
-        Box::new(Type::Base(BaseType::String)),
+        Box::new(Type::Array(Box::new(Type::Base(BaseType::Char)))),
         Box::new(Type::Base(BaseType::I32)),
     )));
 }
@@ -96,7 +97,7 @@ fn ident_undefined_gives_error() {
     let mut sym = SymbolTable::new();
     let mut errors = Vec::new();
     let ident = Expr::Ident("unknown".to_string(), Span::new(1, 1));
-    let ty = check::analyze_expr(&ident, &mut sym, &mut errors);
+    let ty = check::analyze_expr(&ident, &mut sym, &mut errors, &HashMap::new());
     assert_eq!(ty, None);
     assert!(!errors.is_empty());
     assert!(errors[0].0.contains("undefined variable"));
@@ -148,7 +149,7 @@ fn binary_and_requires_bool() {
         right: Box::new(Expr::Bool(true, Span::new(1, 1))),
         span: Span::new(1, 1),
     };
-    let _ = check::analyze_expr(&expr, &mut sym, &mut errors);
+    let _ = check::analyze_expr(&expr, &mut sym, &mut errors, &HashMap::new());
     assert!(!errors.is_empty());
     assert!(errors[0].0.contains("must be Bool"));
 }
@@ -163,7 +164,7 @@ fn binary_or_requires_bool() {
         right: Box::new(Expr::Int(1, Span::new(1, 1))),
         span: Span::new(1, 1),
     };
-    let _ = check::analyze_expr(&expr, &mut sym, &mut errors);
+    let _ = check::analyze_expr(&expr, &mut sym, &mut errors, &HashMap::new());
     assert!(!errors.is_empty());
     assert!(errors[0].0.contains("must be Bool"));
 }
@@ -178,7 +179,7 @@ fn binary_non_numeric_left_errors() {
         right: Box::new(Expr::Int(1, Span::new(1, 1))),
         span: Span::new(1, 1),
     };
-    let _ = check::analyze_expr(&expr, &mut sym, &mut errors);
+    let _ = check::analyze_expr(&expr, &mut sym, &mut errors, &HashMap::new());
     assert!(!errors.is_empty());
     assert!(errors[0].0.contains("must be numeric"));
 }
@@ -214,7 +215,7 @@ fn unary_not_requires_bool() {
         expr: Box::new(Expr::Int(1, Span::new(1, 1))),
         span: Span::new(1, 1),
     };
-    let _ = check::analyze_expr(&expr, &mut sym, &mut errors);
+    let _ = check::analyze_expr(&expr, &mut sym, &mut errors, &HashMap::new());
     assert!(!errors.is_empty());
     assert!(errors[0].0.contains("requires Bool"));
 }
@@ -229,7 +230,7 @@ fn index_requires_integer_index() {
         index: Box::new(Expr::String("bad".into(), Span::new(1, 1))),
         span: Span::new(1, 1),
     };
-    let _ = check::analyze_expr(&expr, &mut sym, &mut errors);
+    let _ = check::analyze_expr(&expr, &mut sym, &mut errors, &HashMap::new());
     assert!(!errors.is_empty());
     assert!(errors[0].0.contains("must be integer"));
 }
@@ -237,19 +238,19 @@ fn index_requires_integer_index() {
 #[test]
 fn index_on_array_returns_element_type() {
     let mut sym = SymbolTable::new();
-    sym.declare("arr".to_string(), Some(Type::Array(Box::new(Type::Base(BaseType::String)))));
+    sym.declare("arr".to_string(), Some(Type::Array(Box::new(Type::Base(BaseType::Char)))));
     let expr = Expr::Index {
         obj: Box::new(Expr::Ident("arr".to_string(), Span::new(1, 1))),
         index: Box::new(Expr::Int(0, Span::new(1, 1))),
         span: Span::new(1, 1),
     };
-    assert_eq!(check_expr(&expr, &mut sym), Some(Type::Base(BaseType::String)));
+    assert_eq!(check_expr(&expr, &mut sym), Some(Type::Base(BaseType::Char)));
 }
 
 #[test]
 fn index_on_map_returns_value_type() {
     let mut sym = SymbolTable::new();
-    sym.declare("m".to_string(), Some(Type::Map(Box::new(Type::Base(BaseType::String)), Box::new(Type::Base(BaseType::I32)))));
+    sym.declare("m".to_string(), Some(Type::Map(Box::new(Type::Base(BaseType::Char)), Box::new(Type::Base(BaseType::I32)))));
     let expr = Expr::Index {
         obj: Box::new(Expr::Ident("m".to_string(), Span::new(1, 1))),
         index: Box::new(Expr::String("k".into(), Span::new(1, 1))),
@@ -280,7 +281,7 @@ fn assign_type_mismatch_errors() {
         value: Box::new(Expr::Bool(true, Span::new(1, 1))),
         span: Span::new(1, 1),
     };
-    let _ = check::analyze_expr(&expr, &mut sym, &mut errors);
+    let _ = check::analyze_expr(&expr, &mut sym, &mut errors, &HashMap::new());
     assert!(!errors.is_empty());
     assert!(errors[0].0.contains("type mismatch"));
 }
@@ -295,7 +296,7 @@ fn assign_numeric_compatible_no_error() {
         value: Box::new(Expr::Int(42, Span::new(1, 1))),
         span: Span::new(1, 1),
     };
-    let ty = check::analyze_expr(&expr, &mut sym, &mut errors);
+    let ty = check::analyze_expr(&expr, &mut sym, &mut errors, &HashMap::new());
     assert_eq!(ty, Some(Type::Base(BaseType::I32)));
     assert!(errors.is_empty());
 }
@@ -328,7 +329,7 @@ fn null_compatible_with_nullable() {
 #[test]
 fn identical_types_compatible() {
     assert!(check::types_compatible(&Type::Base(BaseType::I32), &Type::Base(BaseType::I32)));
-    assert!(check::types_compatible(&Type::Base(BaseType::String), &Type::Base(BaseType::String)));
+    assert!(check::types_compatible(&Type::Base(BaseType::Char), &Type::Base(BaseType::Char)));
 }
 
 #[test]
@@ -391,7 +392,7 @@ fn match_expr_infers_branch_type() {
         span: Span::new(1, 1),
     };
     let ty = check_expr(&match_expr, &mut sym);
-    assert_eq!(ty, Some(Type::Base(BaseType::String)));
+    assert_eq!(ty, Some(Type::Array(Box::new(Type::Base(BaseType::Char)))));
 }
 
 #[test]
@@ -404,7 +405,7 @@ fn bitwise_requires_integer() {
         right: Box::new(Expr::Int(2, Span::new(1, 1))),
         span: Span::new(1, 1),
     };
-    let _ = check::analyze_expr(&expr, &mut sym, &mut errors);
+    let _ = check::analyze_expr(&expr, &mut sym, &mut errors, &HashMap::new());
     assert!(!errors.is_empty());
     assert!(errors[0].0.contains("must be integer"));
 }
