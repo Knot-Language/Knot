@@ -14,17 +14,16 @@ right at home. No jargon dumps, no walls of theory. Just code that runs.
 2. [Variables and Basic Types](#2-variables-and-basic-types)
 3. [Functions](#3-functions)
 4. [Control Flow](#4-control-flow)
-5. [Arrays and Dictionaries](#5-arrays-and-dictionaries)
-6. [Classes and Objects](#6-classes-and-objects)
-7. [Enums](#7-enums)
-8. [Error Handling](#8-error-handling)
-9. [Generics](#9-generics)
-10. [Mixins](#10-mixins)
-11. [Wraps and Decorators](#11-wraps-and-decorators)
-12. [Modules and Imports](#12-modules-and-imports)
-13. [Extern — Call C from Knot](#13-extern--call-c-from-knot)
-14. [Putting It All Together](#14-putting-it-all-together)
-15. [Next Steps](#15-next-steps)
+5. [Classes and Objects](#5-classes-and-objects)
+6. [Enums](#6-enums)
+7. [Error Handling](#7-error-handling)
+8. [Generics](#8-generics)
+9. [Mixins](#9-mixins)
+10. [Wraps and Decorators](#10-wraps-and-decorators)
+11. [Modules and Imports](#11-modules-and-imports)
+12. [Extern — Call C from Knot](#12-extern--call-c-from-knot)
+13. [Putting It All Together](#13-putting-it-all-together)
+14. [Next Steps](#14-next-steps)
 
 ---
 
@@ -49,7 +48,7 @@ Make a file called `hello.knot`:
 import "std/io.knot" as io
 
 func main() -> I32 {
-    io.print_str("Hello, Knot!")
+    io.write_i32("Hello, Knot!")
     return 0
 }
 ```
@@ -68,13 +67,13 @@ If you see `Hello, Knot!` on screen, you're in business.
 - `import "std/io.knot" as io` — brings in the standard library I/O module
 - `func main() -> I32` — "Hey compiler, here's my entry point. When we're done,
   give the OS a 32-bit integer."
-- `io.print_str(...)` — prints a string to the terminal.
+- `io.write_i32(...)` — prints a string to the terminal.
 - `return 0` — tells the OS "all good" (0 = success, anything else = error).
 
 > **About `print()`**: Knot has no built-in `print`. Throughout this tutorial,
-> `print(x)` is shorthand for `io.print_str(x)`. You need to
+> `print(x)` is shorthand for `io.write_i32(x)`. You need to
 > `import "std/io.knot" as io` and set the `KNOT_STD` environment variable first.
-> See [Modules and Imports](#12-modules-and-imports) for details.
+> See [Modules and Imports](#11-modules-and-imports) for details.
 
 Notice there are **no semicolons**. A newline means "statement done" — like
 Python, but with curly braces. Clean and clear.
@@ -92,7 +91,7 @@ type for you:
 ```knot
 age = 25           // whole number → I32
 price = 9.99       // has a decimal → F64
-name = "Alice"     // in quotes → String
+name = "Alice"     // in quotes → Array[Char]
 ok = true          // true/false → Bool
 nothing = null     // null → Null
 ```
@@ -139,7 +138,7 @@ x = maybe as! I32      // ✅ "I swear it's not null — crash if I'm wrong"
 | Whole number | `I8` `I16` `I32` `I64` | `42` defaults to `I32` |
 | Unsigned int | `U8` `U16` `U32` `U64` | `42u32` (add suffix) |
 | Decimal | `F32` `F64` | `3.14` defaults to `F64` |
-| Text | `Array[Char]` (a.k.a. `String`) | `"hello"` |
+| Text | `Array[Char]` | `"hello"` |
 | Single character | `Char` | `'a'` |
 | Yes/No | `Bool` | `true` / `false` |
 | Nothing | `Null` | `null` |
@@ -298,7 +297,7 @@ if x > 0 {
 }
 ```
 
-Any non-zero value is "truthy". You can just write `if flag { ... }` instead of
+Conditions must be Bool. You can just write `if flag { ... }` instead of
 `if flag == true { ... }`.
 
 `if` is also an **expression** — it produces a value:
@@ -323,7 +322,7 @@ while x > 0 {
 
 ### for-in: The Workhorse Loop
 
-Works with ranges, arrays, and dicts:
+Works with ranges and arrays:
 
 ```knot
 // 0 through 9 (0..10 excludes 10)
@@ -336,11 +335,6 @@ for name in ["Alice", "Bob", "Charlie"] {
     print(name)
 }
 
-// over a dict — get both key and value
-scores = {"math": 90, "english": 85}
-for subject, score in scores {
-    print(subject + ": " + score)
-}
 ```
 
 ### match: Multi-Way Branching, Clean
@@ -394,47 +388,9 @@ message. Great for catching logic errors early.
 
 ---
 
-## 5. Arrays and Dictionaries
 
-### Arrays: Ordered List of Same-Type Things
 
-```knot
-nums = [1, 2, 3, 4, 5]
-names = ["Alice", "Bob", "Charlie"]
-empty = []
-
-first = nums[0]          // 1
-nums[0] = 99             // now [99, 2, 3, 4, 5]
-count = nums.length      // 5
-```
-
-`[1, 2, 3]` has type `Array[I32]`. Every element must match.
-
-### Dictionaries: Key → Value Lookup
-
-```knot
-config = {"host": "localhost", "port": 8080}
-caps = {a: 1, b: 2}     // bare keys work too
-
-port = config["port"]    // 8080
-config["debug"] = true   // add or update
-```
-
-`{"a": 1}` has type `Map[String, I32]`.
-
-### The Range Operator `..`
-
-```knot
-for i in 0..5 {   // 0, 1, 2, 3, 4 (stops before 5)
-    print(i)
-}
-```
-
-`a..b` is a range from a (inclusive) to b (exclusive).
-
----
-
-## 6. Classes and Objects
+## 5. Classes and Objects
 
 ### Bundle Data and Behaviour
 
@@ -557,7 +513,7 @@ Each operator can only have one overload per class (no type-based overloading).
 
 ---
 
-## 7. Enums
+## 6. Enums
 
 An enum is "pick exactly one from this list":
 
@@ -582,7 +538,7 @@ enum Option[T] {
 
 ---
 
-## 8. Error Handling
+## 7. Error Handling
 
 ### throw: Something Went Wrong, Bail Out
 
@@ -622,7 +578,7 @@ Everything in the `try` after the throw point is skipped.
 
 ---
 
-## 9. Generics — Write Once, Use with Any Type
+## 8. Generics — Write Once, Use with Any Type
 
 Generics let you say "T can be any type, we'll figure it out later". The
 compiler generates the actual code for each concrete type at compile time —
@@ -635,12 +591,13 @@ func identity[T](x: T) -> T {
     return x              // whatever T is, just hand it back
 }
 
-func pair[K, V](key: K, val: V) -> Map[K, V] {
-    return {key: val}
-}
-
 a = identity(42)          // compiler infers T = I32
 b = identity("hello")     // compiler infers T = String
+
+// Generic functions can also accept multiple type parameters:
+func pair[K, V](key: K, val: V) -> (K, V) {
+    return (key, val)
+}
 c = pair("score", 100)    // K = String, V = I32
 ```
 
@@ -688,7 +645,7 @@ doubled = Util::map([1, 2, 3], (x: I32) -> x * 2)   // [2, 4, 6]
 
 ---
 
-## 10. Mixins — Share Code Without Inheritance Hell
+## 9. Mixins — Share Code Without Inheritance Hell
 
 `mixin` copies all fields and methods from one class into another. Think of it
 as "paste everything from this class into that class," compile-time:
@@ -766,7 +723,7 @@ Priority order: your own methods > mixin methods > mixin's mixin methods.
 
 ---
 
-## 11. Wraps and @ Decorators
+## 10. Wraps and @ Decorators
 
 A `wrap` is a function you can **only call with `@`**. `@` goes before a
 declaration and passes that declaration as the wrap's first argument.
@@ -843,7 +800,7 @@ func isValid(mid: I32) -> Bool {
 
 ---
 
-## 12. Modules and Imports
+## 11. Modules and Imports
 
 ### Pull in Other Files
 
@@ -924,7 +881,7 @@ in one shot.
 
 ---
 
-## 13. Extern — Call C from Knot
+## 12. Extern — Call C from Knot
 
 Knot is a systems language, so talking to C is a first-class feature. You
 declare the signature in Knot, write the implementation in a `.c` file — the
@@ -1005,7 +962,7 @@ Just drop `utils.c` next to `utils.knot`. The compiler handles the rest.
 
 ---
 
-## 14. Putting It All Together
+## 13. Putting It All Together
 
 Here's a real example using classes, generics, mixins, error handling, and
 decorators — all in one file:
@@ -1104,7 +1061,7 @@ func main() -> I32 {
 
 ---
 
-## 15. Where to Go from Here
+## 14. Where to Go from Here
 
 ### Keep Reading
 

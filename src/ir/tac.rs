@@ -27,6 +27,7 @@ pub enum TacInst {
     Mod { dest: Reg, lhs: Operand, rhs: Operand },
     Neg { dest: Reg, src: Operand },
     Not { dest: Reg, src: Operand },
+    BitNot { dest: Reg, src: Operand },
     Shl { dest: Reg, lhs: Operand, rhs: Operand },
     Shr { dest: Reg, lhs: Operand, rhs: Operand },
     BitAnd { dest: Reg, lhs: Operand, rhs: Operand },
@@ -51,14 +52,15 @@ pub enum TacInst {
     LoadStrConst { dest: Reg, name: String },
     IntToFloat { dest: Reg, src: Operand },
     FloatToInt { dest: Reg, src: Operand },
-    AllocArray { dest: Reg, count: Operand },
-    GetElemPtr { dest: Reg, obj: Reg, index: Operand },
+    AllocArray { dest: Reg, count: Operand, elem_ty: Type },
+    GetElemPtr { dest: Reg, obj: Reg, index: Operand, elem_ty: Type },
 }
 
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
     pub params: usize,
+    pub param_types: Vec<Type>,
     pub insts: Vec<TacInst>,
     pub ret_ty: Option<Type>,
 }

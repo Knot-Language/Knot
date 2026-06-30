@@ -1067,14 +1067,6 @@ impl Parser {
                     self.expect_operator("]");
                     Type::Array(Box::new(elem))
                 }
-                "Map" if self.is_op("[") => {
-                    self.advance(); // consume '['
-                    let key = self.parse_type();
-                    self.expect_operator(",");
-                    let val = self.parse_type();
-                    self.expect_operator("]");
-                    Type::Map(Box::new(key), Box::new(val))
-                }
                 _ => Type::Named(s.clone()),
             },
             t => {
@@ -1371,7 +1363,6 @@ impl Parser {
                 expr
             }
             Token::Operator(s) if s == "[" => self.parse_array(),
-            Token::Operator(s) if s == "{" => self.parse_dict(),
             Token::Keyword(ref s) if s == "if" => self.parse_if_expr(),
             Token::Keyword(ref s) if s == "match" => self.parse_match_expr(),
             t => {
@@ -1449,30 +1440,6 @@ impl Parser {
         }
         self.expect_operator("]");
         Expr::Array(items, self.current_span())
-    }
-
-    fn parse_dict(&mut self) -> Expr {
-        self.advance();
-        let mut entries = Vec::new();
-        self.skip_newlines();
-        if !self.is_op("}") {
-            loop {
-                let key = self.parse_expr();
-                self.expect_operator(":");
-                let val = self.parse_expr();
-                entries.push((key, val));
-                if self.is_op(",") {
-                    self.advance();
-                } else if self.is_op("}") {
-                    break;
-                } else {
-                    self.err_expected("',' or '}'", &self.peek().clone());
-                    break;
-                }
-            }
-        }
-        self.expect_operator("}");
-        Expr::Dict(entries, self.current_span())
     }
 
     fn parse_match_expr(&mut self) -> Expr {

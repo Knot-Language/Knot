@@ -102,13 +102,23 @@ fn llvm_type(ty: &crate::parser::ast::Type) -> &'static str {
         Type::Nullable(_) => "i32",
         Type::Named(_) => "ptr",
         Type::Array(_) => "ptr",
-        Type::Map(..) => "ptr",
         Type::Pointer(_) => "ptr",
     }
 }
 
 fn is_class_method(func: &Function, program: &TacProgram) -> bool {
     func.name.contains("__") && program.classes.iter().any(|c| func.name.starts_with(&format!("{}__", c.name)))
+}
+
+fn param_llvm_type(func: &Function, is_method: bool, index: usize) -> &'static str {
+    if is_method && index == 0 {
+        return "ptr";
+    }
+    if let Some(ty) = func.param_types.get(index) {
+        llvm_type(ty)
+    } else {
+        "i32"
+    }
 }
 
 fn emit_function(out: &mut String, func: &Function, program: &TacProgram) {
@@ -122,18 +132,14 @@ fn emit_function(out: &mut String, func: &Function, program: &TacProgram) {
         if i > 0 {
             params.push_str(", ");
         }
-        if is_method && i == 0 {
-            params.push_str("ptr");
-        } else {
-            params.push_str("i32");
-        }
+        params.push_str(param_llvm_type(func, is_method, i));
     }
 
     out.push_str(&format!("define {} @{}({}) {{\n", ret_ty, func.name, params));
     out.push_str("entry:\n");
 
     for i in 0..func.params {
-        let pty = if is_method && i == 0 { "ptr" } else { "i32" };
+        let pty = param_llvm_type(func, is_method, i);
         out.push_str(&format!("  %p{} = alloca {}\n", i, pty));
         out.push_str(&format!("  store {} %{}, ptr %p{}\n", pty, i, i));
     }
@@ -194,7 +200,8 @@ fn emit_insts(
 
         match inst {
             TacInst::Param { dest, index } => {
-                let pty = if *index == 0 && is_class_method(func, ctx.program.unwrap()) { "ptr" } else { "i32" };
+                let is_meth = *index == 0 && is_class_method(func, ctx.program.unwrap());
+                let pty = param_llvm_type(func, is_meth, *index);
                 ctx.set(*dest, pty);
                 out.push_str(&format!("  %r{} = load {}, ptr %p{}\n", dest, pty, index));
                 pos += 1;
@@ -278,9 +285,11 @@ fn emit_insts(
             TacInst::Mov { dest, src } => {
                 let ty = val_ty_src_reg(src, ctx);
                 let s = fmt_op(src, ctx);
-                let op = if ty == "double" { "fadd" } else { "add" };
-                let zero = if ty == "double" { "0.0" } else { "0" };
-                out.push_str(&format!("  %r{} = {} {} {}, {}\n", dest, op, ty, s, zero));
+                if ty == "double" {
+                    out.push_str(&format!("  %r{} = fadd double 0.0, {}\n", dest, s));
+                } else {
+                    out.push_str(&format!("  %r{} = or {} 0, {}\n", dest, ty, s));
+                }
                 ctx.set(*dest, &ty);
                 pos += 1;
             }
@@ -305,6 +314,19 @@ fn emit_insts(
                 let s = fmt_op(src, ctx);
                 out.push_str(&format!("  %r{} = xor i32 {}, 1\n", dest, s));
                 ctx.set(*dest, "i32");
+                pos += 1;
+            }
+            TacInst::BitNot { dest, src } => {
+                let ty = op_ty(src, ctx);
+                let s = fmt_op(src, ctx);
+                if ty == "double" {
+                    out.push_str(&format!("  %r{} = bitcast double {} to i64\n", dest, s));
+                    out.push_str(&format!("  %r{}_not = xor i64 %r{}, -1\n", dest, dest));
+                    out.push_str(&format!("  %r{} = bitcast i64 %r{}_not to double\n", dest, dest));
+                } else {
+                    out.push_str(&format!("  %r{} = xor {} {}, -1\n", dest, ty, s));
+                }
+                ctx.set(*dest, &ty);
                 pos += 1;
             }
             TacInst::Shl { dest, lhs, rhs } => { arith(out, dest, lhs, rhs, ctx, "shl", "shl"); pos += 1; }
@@ -392,17 +414,19 @@ fn emit_insts(
                 pos += 1;
             }
 
-            TacInst::AllocArray { dest, count } => {
+            TacInst::AllocArray { dest, count, elem_ty } => {
                 let c = fmt_op(count, ctx);
-                out.push_str(&format!("  %r{} = alloca i32, i32 {}\n", dest, c));
+                let ll_elem = llvm_type(elem_ty);
+                out.push_str(&format!("  %r{} = alloca {}, i32 {}\n", dest, ll_elem, c));
                 ctx.set(*dest, "ptr");
                 pos += 1;
             }
 
-            TacInst::GetElemPtr { dest, obj, index } => {
+            TacInst::GetElemPtr { dest, obj, index, elem_ty } => {
                 let obj_str = fmt_op(&Operand::Reg(*obj), ctx);
                 let idx_str = fmt_op(index, ctx);
-                out.push_str(&format!("  %r{} = getelementptr i32, ptr {}, i32 {}\n", dest, obj_str, idx_str));
+                let ll_elem = llvm_type(elem_ty);
+                out.push_str(&format!("  %r{} = getelementptr {}, ptr {}, i32 {}\n", dest, ll_elem, obj_str, idx_str));
                 ctx.set(*dest, "ptr");
                 pos += 1;
             }

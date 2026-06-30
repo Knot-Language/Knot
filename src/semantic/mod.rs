@@ -38,16 +38,16 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn error(&mut self, msg: String) {
-        self.errors.push((msg.clone(), crate::error::Span::new(1, 1)));
-        self.diagnostics.error(msg, crate::error::Span::new(1, 1));
+    fn error(&mut self, msg: String, span: crate::error::Span) {
+        self.errors.push((msg.clone(), span));
+        self.diagnostics.error(msg, span);
     }
 
-    fn type_mismatch(&mut self, expected: &Type, actual: &Type, context: &str) {
+    fn type_mismatch(&mut self, expected: &Type, actual: &Type, context: &str, span: crate::error::Span) {
         self.error(format!(
             "type mismatch in {}: expected {:?}, got {:?}",
             context, expected, actual
-        ));
+        ), span);
     }
 
     fn check_entry_point(&mut self, program: &[Stmt]) {
@@ -195,6 +195,7 @@ impl SemanticAnalyzer {
     }
 
     fn analyze_return(&mut self, expr: &Option<Expr>) -> Option<Type> {
+        let span = expr.as_ref().map(|e| check::expr_span(e)).unwrap_or(crate::error::Span::new(1, 1));
         let actual = match expr {
             Some(e) => self.analyze_expr(e),
             None => Some(Type::Base(BaseType::Void)),
@@ -203,7 +204,7 @@ impl SemanticAnalyzer {
         let expected_ret = self.return_type.clone();
         if let (Some(expected), Some(actual)) = (&expected_ret, &actual) {
             if !check::types_compatible(expected, actual) {
-                self.type_mismatch(expected, actual, "return");
+                self.type_mismatch(expected, actual, "return", span);
             }
         }
 
@@ -217,9 +218,10 @@ impl SemanticAnalyzer {
         else_block: &Option<Box<Stmt>>,
     ) {
         let cond_ty = self.analyze_expr(cond);
+        let span = check::expr_span(cond);
         if let Some(ty) = &cond_ty {
             if !matches!(ty, Type::Base(BaseType::Bool)) {
-                self.type_mismatch(&Type::Base(BaseType::Bool), ty, "if condition");
+                self.type_mismatch(&Type::Base(BaseType::Bool), ty, "if condition", span);
             }
         }
 
@@ -238,9 +240,10 @@ impl SemanticAnalyzer {
 
     fn analyze_while(&mut self, cond: &Expr, body: &Block) {
         let cond_ty = self.analyze_expr(cond);
+        let span = check::expr_span(cond);
         if let Some(ty) = &cond_ty {
             if !matches!(ty, Type::Base(BaseType::Bool)) {
-                self.type_mismatch(&Type::Base(BaseType::Bool), ty, "while condition");
+                self.type_mismatch(&Type::Base(BaseType::Bool), ty, "while condition", span);
             }
         }
 

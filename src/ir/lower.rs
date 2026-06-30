@@ -97,6 +97,10 @@ struct SavedContext {
     prev_ret: Option<Type>,
 }
 
+fn param_types_from(params: &[Param]) -> Vec<Type> {
+    params.iter().map(|p| p.ty.clone().unwrap_or(Type::Base(BaseType::I32))).collect()
+}
+
 impl Lower {
     pub fn lower(program: &[Stmt]) -> TacProgram {
         let mut l = Lower {
@@ -104,7 +108,7 @@ impl Lower {
             label_counter: 0,
             vars: HashMap::new(),
             var_types: HashMap::new(),
-            func: Function { name: String::new(), params: 0, insts: Vec::new(), ret_ty: None },
+            func: Function { name: String::new(), params: 0, param_types: Vec::new(), insts: Vec::new(), ret_ty: None },
             temp_funcs: Vec::new(),
             classes: Vec::new(),
             enums: Vec::new(),
@@ -222,7 +226,10 @@ impl Lower {
     // ── Method lowering ────────────────────────────────────
 
     fn lower_method(&mut self, func_name: &str, has_this: bool, params: &[Param], ret_ty: &Option<Type>, body: &Block) {
-        let prev = self.save_context(func_name, params.len() + if has_this { 1 } else { 0 });
+        let mut pts = Vec::new();
+        if has_this { pts.push(Type::Base(BaseType::I32)); }
+        pts.extend(param_types_from(params));
+        let prev = self.save_context(func_name, pts.len(), pts);
         if let Some(cn) = func_name.split("__").next() { self.current_class = Some(cn.to_string()); }
         self.current_ret_ty = ret_ty.clone();
         self.reg_counter = 0;
@@ -237,7 +244,7 @@ impl Lower {
     }
 
     fn lower_constructor(&mut self, func_name: &str, class_name: &str, params: &[Param], body: &Block) {
-        let prev = self.save_context(func_name, params.len());
+        let prev = self.save_context(func_name, params.len(), param_types_from(params));
         self.current_class = Some(class_name.to_string());
         self.current_ret_ty = None;
         self.reg_counter = 0;
@@ -251,7 +258,7 @@ impl Lower {
     }
 
     fn lower_destructor(&mut self, func_name: &str, class_name: &str, body: &Block) {
-        let prev = self.save_context(func_name, 1);
+        let prev = self.save_context(func_name, 1, vec![Type::Base(BaseType::I32)]);
         self.current_class = Some(class_name.to_string());
         self.current_ret_ty = None;
         self.reg_counter = 0;
@@ -262,8 +269,8 @@ impl Lower {
         self.restore_context(prev);
     }
 
-    fn save_context(&mut self, fname: &str, nparams: usize) -> SavedContext {
-        let prev_func = std::mem::replace(&mut self.func, Function { name: fname.to_string(), params: nparams, insts: Vec::new(), ret_ty: None });
+    fn save_context(&mut self, fname: &str, nparams: usize, param_types: Vec<Type>) -> SavedContext {
+        let prev_func = std::mem::replace(&mut self.func, Function { name: fname.to_string(), params: nparams, param_types, insts: Vec::new(), ret_ty: None });
         let prev_vars = std::mem::take(&mut self.vars);
         let prev_var_types = std::mem::take(&mut self.var_types);
         let prev_class = self.current_class.clone();
@@ -287,7 +294,8 @@ impl Lower {
         match stmt {
             Stmt::FuncDef { name, generics, params, ret_ty, body, .. } => {
                 if generics.is_empty() {
-                    let prev = self.save_context(name, params.len());
+                    let pts = param_types_from(params);
+                    let prev = self.save_context(name, params.len(), pts);
                     self.current_ret_ty = ret_ty.clone();
                     self.reg_counter = 0;
                     for (i, p) in params.iter().enumerate() {
@@ -532,11 +540,11 @@ impl Lower {
             Expr::Array(items, _) => {
                 let arr = self.new_reg();
                 let count = Operand::Imm(items.len() as i64);
-                self.emit(TacInst::AllocArray { dest: arr, count });
+                self.emit(TacInst::AllocArray { dest: arr, count, elem_ty: Type::Base(BaseType::I32) });
                 for (i, item) in items.iter().enumerate() {
                     let val = self.lower_expr(item);
                     let ptr = self.new_reg();
-                    self.emit(TacInst::GetElemPtr { dest: ptr, obj: arr, index: Operand::Imm(i as i64) });
+                    self.emit(TacInst::GetElemPtr { dest: ptr, obj: arr, index: Operand::Imm(i as i64), elem_ty: Type::Base(BaseType::I32) });
                     self.emit(TacInst::Store { addr: ptr, src: val });
                 }
                 let ir = self.new_reg(); self.emit(TacInst::Mov { dest: ir, src: Operand::Imm(0) });
@@ -563,7 +571,7 @@ impl Lower {
         let var_reg = self.new_reg();
         if let Some(arr) = arr_reg {
             let elem_ptr = self.new_reg();
-            self.emit(TacInst::GetElemPtr { dest: elem_ptr, obj: arr, index: Operand::Reg(index_reg) });
+            self.emit(TacInst::GetElemPtr { dest: elem_ptr, obj: arr, index: Operand::Reg(index_reg), elem_ty: Type::Base(BaseType::I32) });
             self.emit(TacInst::Load { dest: var_reg, addr: elem_ptr });
         } else {
             self.emit(TacInst::Mov { dest: var_reg, src: Operand::Reg(index_reg) });
@@ -712,37 +720,21 @@ impl Lower {
             Expr::Array(items, _) => {
                 let arr = self.new_reg();
                 let count = Operand::Imm(items.len() as i64);
-                self.emit(TacInst::AllocArray { dest: arr, count });
+                self.emit(TacInst::AllocArray { dest: arr, count, elem_ty: Type::Base(BaseType::I32) });
                 for (i, item) in items.iter().enumerate() {
                     let val = self.lower_expr(item);
                     let ptr = self.new_reg();
-                    self.emit(TacInst::GetElemPtr { dest: ptr, obj: arr, index: Operand::Imm(i as i64) });
+                    self.emit(TacInst::GetElemPtr { dest: ptr, obj: arr, index: Operand::Imm(i as i64), elem_ty: Type::Base(BaseType::I32) });
                     self.emit(TacInst::Store { addr: ptr, src: val });
                 }
                 Operand::Reg(arr)
-            }
-            Expr::Dict(entries, _) => {
-                let map = self.new_reg();
-                let _count = Operand::Imm(entries.len() as i64);
-                self.emit(TacInst::AllocArray { dest: map, count: Operand::Imm((entries.len() * 2) as i64) });
-                for (i, (k, v)) in entries.iter().enumerate() {
-                    let key_val = self.lower_expr(k);
-                    let val_val = self.lower_expr(v);
-                    let key_ptr = self.new_reg();
-                    self.emit(TacInst::GetElemPtr { dest: key_ptr, obj: map, index: Operand::Imm((i * 2) as i64) });
-                    self.emit(TacInst::Store { addr: key_ptr, src: key_val });
-                    let val_ptr = self.new_reg();
-                    self.emit(TacInst::GetElemPtr { dest: val_ptr, obj: map, index: Operand::Imm((i * 2 + 1) as i64) });
-                    self.emit(TacInst::Store { addr: val_ptr, src: val_val });
-                }
-                Operand::Reg(map)
             }
             Expr::Index { obj, index, .. } => {
                 let obj_reg = self.lower_expr(obj);
                 let idx_op = self.lower_expr(index);
                 let obj_r = match &obj_reg { Operand::Reg(r) => *r, _ => 0 };
                 let elem_ptr = self.new_reg();
-                self.emit(TacInst::GetElemPtr { dest: elem_ptr, obj: obj_r, index: idx_op });
+                self.emit(TacInst::GetElemPtr { dest: elem_ptr, obj: obj_r, index: idx_op, elem_ty: Type::Base(BaseType::I32) });
                 let result = self.new_reg();
                 self.emit(TacInst::Load { dest: result, addr: elem_ptr });
                 Operand::Reg(result)
@@ -875,7 +867,7 @@ impl Lower {
         match op {
             UnaryOp::Neg => self.emit(TacInst::Neg { dest, src }),
             UnaryOp::Not => self.emit(TacInst::Not { dest, src }),
-            UnaryOp::BitNot => self.emit(TacInst::Not { dest, src }),
+            UnaryOp::BitNot => self.emit(TacInst::BitNot { dest, src }),
         }
         Operand::Reg(dest)
     }
@@ -960,7 +952,8 @@ impl Lower {
                 let ret_ty_copy = ret_ty.clone();
                 let body_copy = body.clone();
                 self.func_params.insert(mono_name_copy.clone(), params_copy.clone());
-                let prev = self.save_context(&mono_name_copy, params_copy.len());
+                let pts = param_types_from(&params_copy);
+                let prev = self.save_context(&mono_name_copy, params_copy.len(), pts);
                 self.current_ret_ty = ret_ty_copy.clone();
                 self.reg_counter = 0;
                 for (i, p) in params_copy.iter().enumerate() {
@@ -1090,7 +1083,9 @@ impl Lower {
         let lambda_name = format!("__lambda_{}", self.label_counter);
         self.last_lambda_name = Some(lambda_name.clone());
         let total_params = params.len() + captured.len();
-        let prev = self.save_context(&lambda_name, total_params);
+        let mut pts = param_types_from(params);
+        pts.resize(total_params, Type::Base(BaseType::I32));
+        let prev = self.save_context(&lambda_name, total_params, pts);
         self.current_ret_ty = None;
         self.reg_counter = 0;
 
@@ -1289,7 +1284,6 @@ fn sanitize_type_name(ty: &Type) -> String {
         Type::Nullable(inner) => format!("Nullable{:?}", inner),
         Type::Named(n) => n.clone(),
         Type::Array(inner) => format!("Array_{}", sanitize_type_name(inner)),
-        Type::Map(k, v) => format!("Map_{}_{}", sanitize_type_name(k), sanitize_type_name(v)),
         Type::Pointer(inner) => format!("Ptr_{}", sanitize_type_name(inner)),
     }
 }
@@ -1369,10 +1363,6 @@ fn substitute_type(ty: &mut Type, from: &str, to: &Type) {
         Type::Named(n) if n == from => { *ty = to.clone(); }
         Type::Nullable(inner) => substitute_type(inner, from, to),
         Type::Array(inner) => substitute_type(inner, from, to),
-        Type::Map(k, v) => {
-            substitute_type(k, from, to);
-            substitute_type(v, from, to);
-        }
         Type::Pointer(inner) => substitute_type(inner, from, to),
         _ => {}
     }

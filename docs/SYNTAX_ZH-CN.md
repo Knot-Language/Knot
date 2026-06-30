@@ -63,7 +63,9 @@ Knot 采用以下命名约定（编译器不强制，但强烈推荐）：
 统一原因：类与实例通过大小写即可区分——`Point` 是类，`point` 是变量；
 `Point.getX()` 一眼看出 `Point` 是类名、`getX` 是方法。
 
-### 注释
+---
+
+## 2. 注释
 
 单行注释从 `//` 到行尾。多行注释以 `/*` 开始、`*/` 结束，可嵌套。
 
@@ -78,7 +80,7 @@ Knot 采用以下命名约定（编译器不强制，但强烈推荐）：
 
 ---
 
-## 2. 关键字
+## 3. 关键字
 
 以下为保留关键字，不可用作标识符：
 
@@ -94,7 +96,7 @@ true      try      while    wrap
 
 ---
 
-## 3. 字面量
+## 4. 字面量
 
 ### 布尔
 
@@ -191,19 +193,9 @@ true      try      while    wrap
 []                   // 空数组
 ```
 
-### 字典
-
-花括号包裹，`key: value` 对，逗号分隔。key 可以是任意表达式：
-
-```knot
-{"name": "Knot", "year": 2026}
-{a: 1, b: 2}
-{}                   // 空字典
-```
-
 ---
 
-## 4. 运算符
+## 5. 运算符
 
 按优先级从低到高排列：
 
@@ -237,7 +229,7 @@ true      try      while    wrap
 
 ---
 
-## 5. 变量与类型
+## 6. 变量与类型
 
 ### 声明与推断
 
@@ -246,7 +238,7 @@ Knot 采用**赋值即声明**机制。变量首次被赋值时自动声明，�
 ```knot
 x = 42                 // 推断为 I32
 y = 3.14               // 推断为 F64
-name = "Knot"          // 推断为 String
+name = "Knot"          // 推断为 Array[Char]
 flag = true            // 推断为 Bool
 ```
 
@@ -286,7 +278,7 @@ value = maybe ?? 0        // ✓ 空值合并
 
 ---
 
-## 6. 函数
+## 7. 函数
 
 ### 定义
 
@@ -298,7 +290,7 @@ func add(a: I32, b: I32) -> I32 {
 }
 
 func nothing() {          // 等价于 -> Void
-    io.print_str("side effect")  // 来自 std/io.knot
+    io.write_i32(42)              // 来自 std/io.knot
 }
 ```
 
@@ -327,9 +319,9 @@ greet("Knot", 3)         // name="Knot", times=3
 
 默认参数必须从右向左连续提供，不可跳过。
 
-### 打包参数 (args/kwargs)
+### Variadic Parameters (args)
 
-`args` 将所有位置参数打包为数组。`kwargs` 将所有命名参数打包为字典。二者互斥，且不能与普通参数共存：
+`args` marks a parameter that collects remaining positional arguments into an array
 
 ```knot
 func sumAll(args items: Array[I32]) -> I32 {
@@ -379,10 +371,6 @@ result = double(5)       // 10
 ```knot
 func identity[T](x: T) -> T {
     return x
-}
-
-func pair[K, V](key: K, val: V) -> Map[K, V] {
-    return {key: val}
 }
 
 result = identity(42)      // T 推断为 I32
@@ -439,7 +427,7 @@ class Util {
 
 ### if / else
 
-条件可以是任意表达式，非零为真。`if`-`else` 链：
+条件必须是 Bool 类型。`if`-`else` 链：
 
 ```knot
 if x > 0 {
@@ -469,7 +457,7 @@ while x > 0 {
 
 ### for-in
 
-遍历范围、数组或字典：
+遍历范围或数组：
 
 ```knot
 for i in 0..10 {         // 0 到 9
@@ -1013,14 +1001,15 @@ typedef struct { knot_i32 fd; } File;
 | 指针 | `T*` | 指向 T 的指针，用于 C 互操作 |
 | 可空 | `T?` | 可为 `null` |
 | 数组 | `Array[T]` | 动态长度 |
-| 字典 | `Map[K, V]` | 键值对 |
 | 类类型 | `ClassName` | 自定义类 |
+
+
 
 ### 类型推断规则
 
 - `42` → `I32`
 - `3.14` → `F64`
-- `"hello"` → `String`
+- `"hello"` → `Array[Char]`
 - `true` / `false` → `Bool`
 - `null` → `Null`
 - 数组 `[1, 2, 3]` → `Array[I32]`

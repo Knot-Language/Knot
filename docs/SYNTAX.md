@@ -97,8 +97,6 @@ Single-quoted single character, type `Char` (single byte):
 '0'
 ```
 
-Single-quoted multiple characters are treated as raw string (no escape processing).
-
 ### Integer
 
 Supports decimal, hex `0x`, binary `0b`, and octal `0o` notation. Underscores may be used as visual separators. A suffix specifies the bit width:
@@ -153,7 +151,7 @@ Double-quoted strings `"..."` support escape sequences. String literals are of t
 
 ### Raw String
 
-Backtick `` `...` `` strings do NOT process escape sequences �?ideal for paths:
+Backtick `` `...` `` strings do NOT process escape sequences -- ideal for paths:
 
 ```knot
 `C:\Users\name\file.txt`
@@ -174,16 +172,6 @@ Square brackets, comma-separated:
 [1, 2, 3]
 ["a", "b"]
 []                   // empty array
-```
-
-### Dict
-
-Curly braces, `key: value` pairs, comma-separated. Keys can be any expression:
-
-```knot
-{"name": "Knot", "year": 2026}
-{a: 1, b: 2}
-{}                   // empty dict
 ```
 
 ---
@@ -218,7 +206,6 @@ Additional symbols:
 | `->` | Function return type marker |
 | `=>` | Match branch arrow |
 | `@` | Wrap invocation |
-| `..` | Range operator |
 
 ---
 
@@ -231,7 +218,7 @@ Knot uses **assignment as declaration**. A variable is declared on its first ass
 ```knot
 x = 42                 // inferred as I32
 y = 3.14               // inferred as F64
-name = "Knot"          // inferred as String
+name = "Knot"          // inferred as Array[Char]
 flag = true            // inferred as Bool
 ```
 
@@ -250,8 +237,8 @@ Once a variable's type is determined, subsequent assignments must match:
 
 ```knot
 a = 10                 // locked to I32
-a = 20                 // �?valid
-// a = "hello"         // �?type mismatch, compile error
+a = 20                 // valid
+// a = "hello"         // type mismatch, compile error
 ```
 
 Numeric types have implicit compatibility (I32 can widen to F64, etc.).
@@ -264,9 +251,9 @@ Append `?` to a type name to allow `null`. `T?` values cannot be directly assign
 maybe: I32? = null
 maybe = 42
 
-// value: I32 = maybe     // �?compile error
-value = maybe as! I32     // �?forced cast
-value = maybe ?? 0        // �?null-coalesce
+// value: I32 = maybe     // compile error
+value = maybe as! I32     // forced cast
+value = maybe ?? 0        // null-coalesce
 ```
 
 ---
@@ -283,7 +270,7 @@ func add(a: I32, b: I32) -> I32 {
 }
 
 func nothing() {          // equivalent to -> Void
-    io.print_str("side effect")  // from std/io.knot
+    io.write_i32(42)  // from std/io.knot
 }
 ```
 
@@ -310,9 +297,9 @@ greet("Knot", 3)         // name="Knot", times=3
 
 Default parameters must be provided contiguously from right to left.
 
-### Variadic Parameters (args / kwargs)
+### Variadic Parameters (args)
 
-`args` packs all positional arguments into an array. `kwargs` packs all named arguments into a dict. They are mutually exclusive with regular parameters:
+`args` marks a parameter that collects remaining positional arguments into an array:
 
 ```knot
 func sumAll(args items: Array[I32]) -> I32 {
@@ -363,10 +350,6 @@ Type parameters are declared in `[T, U, ...]` after the function name:
 ```knot
 func identity[T](x: T) -> T {
     return x
-}
-
-func pair[K, V](key: K, val: V) -> Map[K, V] {
-    return {key: val}
 }
 
 result = identity(42)      // T inferred as I32
@@ -426,7 +409,7 @@ class Util {
 
 ### if / else
 
-Any non-zero expression is truthy. `if`-`else` chains:
+Condition must be `Bool`. `if`-`else` chains:
 
 ```knot
 if x > 0 {
@@ -456,7 +439,7 @@ while x > 0 {
 
 ### for-in
 
-Iterates over ranges, arrays, or dicts:
+Iterates over ranges or arrays:
 
 ```knot
 for i in 0..10 {         // 0 through 9
@@ -492,7 +475,7 @@ The `else` branch is the default. There is no fall-through.
 
 ### break / continue
 
-`break` exits the nearest loop. `continue` skips to the next iteration. An optional integer specifies the number of loop levels to break out of:
+`break` exits the nearest loop. `continue` skips to the next iteration. Both accept an optional integer specifying the number of loop levels:
 
 ```knot
 while true {
@@ -506,6 +489,8 @@ while true {
     }
 }
 ```
+
+Both `break` and `continue` support level arguments: `break 2` exits two loops, `continue 2` skips two loop iterations.
 
 ### assert
 
@@ -541,7 +526,7 @@ p = Point::new(10, 20)
 
 ### Constructor (new)
 
-`func new` is the constructor. It implicitly returns the class type. Do NOT use `static` or a return type annotation �?the compiler will warn:
+`func new` is the constructor. It implicitly returns the class type. Do NOT use `static` or a return type annotation -- the compiler will warn:
 
 ```knot
 class Point {
@@ -689,7 +674,7 @@ Note: each class may only define one overload per operator (no type-based overlo
 
 ### wrap
 
-`wrap` defines a function that can **only be invoked via `@` syntax** �?it cannot be called directly. `@` applies to the declaration on the next line; the wrapped entity is automatically injected as the first parameter. Extra arguments are passed via `@name(...)`.
+`wrap` defines a function that can **only be invoked via `@` syntax** -- it cannot be called directly. `@` applies to the declaration on the next line; the wrapped entity is automatically injected as the first parameter. Extra arguments are passed via `@name(...)`.
 
 **Top-level wrap**
 
@@ -720,7 +705,7 @@ func hello() { return "world" }
 // Desugars to: hello = debug(hello)
 ```
 
-**Class-level wrap** �?first param is `this`, second is the wrapped entity:
+**Class-level wrap** -- first param is `this`, second is the wrapped entity:
 
 ```knot
 class Range {
@@ -742,11 +727,11 @@ func isValid(mid: I32) -> Bool {
 
 **Key rules**:
 
-- `wrap` cannot be called explicitly �?only via `@`
+- `wrap` cannot be called explicitly -- only via `@`
 - `@name` decorates the next declaration, injecting it as the first parameter
 - `@name(args)` passes extra args to subsequent wrap parameters
 - In a class wrap, the first param is `this`, the second is the wrapped entity
-- Compile-time inlined �?zero overhead
+- Compile-time inlined -- zero overhead
 ```
 
 ---
@@ -804,7 +789,7 @@ try {
 ```
 
 `throw` stores the exception value in a global register and jumps to the
-nearest catch handler. Nested try/catch blocks are supported �?each
+nearest catch handler. Nested try/catch blocks are supported -- each
 `try` saves and restores its own handler label.
 
 ---
@@ -860,7 +845,7 @@ Two path forms are accepted:
 
 When an alias is provided, all top-level definitions from the imported file are accessible
 under the `<alias>.` namespace. Without an alias, imported symbols are merged directly into
-the current scope �?they can be used as if they were defined in the importing file.
+the current scope -- they can be used as if they were defined in the importing file.
 
 ```knot
 import "std/io.knot" as io
@@ -991,9 +976,9 @@ Include `"knot.h"` in your C implementation files.
 
 | Category | Types | Notes |
 |----------|-------|-------|
-| Signed int | `I8` `I16` `I32` `I64` | Default integer literal �?I32 |
+| Signed int | `I8` `I16` `I32` `I64` | Default integer literal -> I32 |
 | Unsigned int | `U8` `U16` `U32` `U64` | |
-| Float | `F32` `F64` | Default float literal �?F64 |
+| Float | `F32` `F64` | Default float literal -> F64 |
 | Character | `Char` | Single byte |
 | Boolean | `Bool` | `true` / `false` |
 | Null | `Null` | Sole value `null` |
@@ -1006,15 +991,14 @@ Include `"knot.h"` in your C implementation files.
 | Pointer | `T*` | Pointer to T, for C interop |
 | Nullable | `T?` | May be `null` |
 | Array | `Array[T]` | Dynamic length |
-| Dict | `Map[K, V]` | Key-value pairs |
 | Class | `ClassName` | User-defined class |
 
 ### Type Inference Rules
 
-- `42` �?`I32`
-- `3.14` �?`F64`
-- `"hello"` �?`String`
-- `true` / `false` �?`Bool`
-- `null` �?`Null`
-- Array `[1, 2, 3]` �?`Array[I32]`
+- `42` -> `I32`
+- `3.14` -> `F64`
+- `"hello"` -> `Array[Char]`
+- `true` / `false` -> `Bool`
+- `null` -> `Null`
+- Array `[1, 2, 3]` -> `Array[I32]`
 - Binary operation: result type is the wider of the two operands

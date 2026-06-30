@@ -150,20 +150,6 @@ fn type_array_of_i32() {
 }
 
 #[test]
-fn type_map_of_string_to_i32() {
-    let stmts = parse("func f(a: Map[Char, I32]) {}");
-    match &stmts[0] {
-        Stmt::FuncDef { params, .. } => {
-            assert_eq!(
-                params[0].ty,
-                Some(Type::Map(Box::new(Type::Base(BaseType::Char)), Box::new(Type::Base(BaseType::I32))))
-            );
-        }
-        _ => panic!("expected FuncDef"),
-    }
-}
-
-#[test]
 fn type_nullable_array() {
     let stmts = parse("func f(a: Array[I32]?) {}");
     match &stmts[0] {
@@ -233,7 +219,7 @@ fn generic_function_single_param() {
 
 #[test]
 fn generic_function_multi_param() {
-    let stmts = parse("func pair[K, V](key: K, val: V) -> Map[K, V] { return {key: val} }");
+    let stmts = parse("func pair[K, V](key: K, val: V) -> Array[K] { return [key] }");
     match &stmts[0] {
         Stmt::FuncDef { name, generics, params, .. } => {
             assert_eq!(name, "pair");
@@ -428,7 +414,7 @@ fn lambda_no_params() {
     }
 }
 
-// ── Array / Dict Literals ───────────────────────────
+// ── Array Literals ───────────────────────────
 
 #[test]
 fn array_literal() {
@@ -461,36 +447,6 @@ fn empty_array() {
     }
 }
 
-#[test]
-fn dict_literal() {
-    let stmts = parse("func f() { x = {\"name\": \"Knot\", \"year\": 2026} }");
-    match &stmts[0] {
-        Stmt::FuncDef { body, .. } => match &body.stmts[0] {
-            Stmt::Expr(Expr::Assign { value, .. }) => {
-                assert!(matches!(value.as_ref(), Expr::Dict(..)));
-            }
-            _ => panic!("expected Assign"),
-        },
-        _ => panic!("expected FuncDef"),
-    }
-}
-
-#[test]
-fn empty_dict() {
-    let stmts = parse("func f() { x = {} }");
-    match &stmts[0] {
-        Stmt::FuncDef { body, .. } => match &body.stmts[0] {
-            Stmt::Expr(Expr::Assign { value, .. }) => {
-                match value.as_ref() {
-                    Expr::Dict(entries, _) => assert!(entries.is_empty()),
-                    _ => panic!("expected Dict"),
-                }
-            }
-            _ => panic!("expected Assign"),
-        },
-        _ => panic!("expected FuncDef"),
-    }
-}
 
 #[test]
 fn index_expression() {

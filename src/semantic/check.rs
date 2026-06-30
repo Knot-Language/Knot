@@ -32,7 +32,6 @@ pub fn analyze_expr(
         Expr::Assign { target, value, span: s } => check_assign(target, value, symbols, errors, *s, class_members),
         Expr::IfExpr { cond, then_block, else_block, span: s } => check_if_expr(cond, then_block, else_block, symbols, errors, *s, class_members),
         Expr::Array(elems, _s) => check_array(elems, symbols, errors, class_members),
-        Expr::Dict(entries, _s) => check_dict(entries, symbols, errors, class_members),
         Expr::Cast { expr: e, ty, forced: _, span: _s } => {
             analyze_expr(e, symbols, errors, class_members);
             Some(ty.clone())
@@ -62,7 +61,7 @@ pub fn expr_span(expr: &Expr) -> Span {
         Expr::Assign { span: s, .. } => *s,
         Expr::IfExpr { span: s, .. } => *s,
         Expr::Array(_, s) => *s,
-        Expr::Dict(_, s) => *s,
+
         Expr::Cast { span: s, .. } => *s,
         Expr::Lambda { span: s, .. } => *s,
         Expr::MatchExpr { span: s, .. } => *s,
@@ -239,7 +238,6 @@ fn check_index(
     }
     match &obj_ty {
         Some(Type::Array(elem_ty)) => Some(*elem_ty.clone()),
-        Some(Type::Map(_kty, vty)) => Some(*vty.clone()),
         _ => Some(Type::Base(BaseType::I32)),
     }
 }
@@ -299,8 +297,12 @@ fn check_assign(
                 }
             }
         }
+        Expr::Access { obj, field: _, .. } => {
+            // Field assignment — validate obj expression, then accept
+            let _obj_ty = analyze_expr(obj, symbols, errors, class_members);
+        }
         _ => {
-            errors.push(("assignment target must be an identifier".into(), span));
+            errors.push(("assignment target must be an identifier or field access".into(), span));
         }
     }
     val_ty
@@ -369,7 +371,7 @@ fn analyze_expr_stmt(
     }
 }
 
-// ── Array / Dict / Lambda / MatchExpr ─────────────────
+// ── Array / Lambda / MatchExpr ─────────────────
 
 fn check_array(
     elems: &[Expr],
@@ -385,26 +387,6 @@ fn check_array(
         }
     }
     Some(Type::Array(Box::new(elem_ty.unwrap_or(Type::Base(BaseType::Void)))))
-}
-
-fn check_dict(
-    entries: &[(Expr, Expr)],
-    symbols: &mut SymbolTable,
-    errors: &mut Vec<(String, Span)>,
-    class_members: &HashMap<String, Vec<ClassMember>>,
-) -> Option<Type> {
-    let mut key_ty = None;
-    let mut val_ty = None;
-    for (k, v) in entries {
-        let kt = analyze_expr(k, symbols, errors, class_members);
-        let vt = analyze_expr(v, symbols, errors, class_members);
-        if key_ty.is_none() { key_ty = kt; }
-        if val_ty.is_none() { val_ty = vt; }
-    }
-    Some(Type::Map(
-        Box::new(key_ty.unwrap_or(Type::Base(BaseType::Void))),
-        Box::new(val_ty.unwrap_or(Type::Base(BaseType::Void))),
-    ))
 }
 
 fn check_lambda(

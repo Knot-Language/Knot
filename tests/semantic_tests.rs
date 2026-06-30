@@ -37,18 +37,6 @@ fn empty_array_infers_void() {
 }
 
 #[test]
-fn dict_infers_key_value_types() {
-    let mut sym = SymbolTable::new();
-    let dict = Expr::Dict(vec![
-        (Expr::String("k".into(), Span::new(1, 1)), Expr::Int(1, Span::new(1, 1))),
-    ], Span::new(1, 1));
-    assert_eq!(check_expr(&dict, &mut sym), Some(Type::Map(
-        Box::new(Type::Array(Box::new(Type::Base(BaseType::Char)))),
-        Box::new(Type::Base(BaseType::I32)),
-    )));
-}
-
-#[test]
 fn cast_returns_target_type() {
     let mut sym = SymbolTable::new();
     let cast = Expr::Cast {
@@ -245,18 +233,6 @@ fn index_on_array_returns_element_type() {
         span: Span::new(1, 1),
     };
     assert_eq!(check_expr(&expr, &mut sym), Some(Type::Base(BaseType::Char)));
-}
-
-#[test]
-fn index_on_map_returns_value_type() {
-    let mut sym = SymbolTable::new();
-    sym.declare("m".to_string(), Some(Type::Map(Box::new(Type::Base(BaseType::Char)), Box::new(Type::Base(BaseType::I32)))));
-    let expr = Expr::Index {
-        obj: Box::new(Expr::Ident("m".to_string(), Span::new(1, 1))),
-        index: Box::new(Expr::String("k".into(), Span::new(1, 1))),
-        span: Span::new(1, 1),
-    };
-    assert_eq!(check_expr(&expr, &mut sym), Some(Type::Base(BaseType::I32)));
 }
 
 #[test]
